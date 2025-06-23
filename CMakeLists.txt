@@ -13,3 +13,4 @@ project ("Gorgon")
 
 # Include sub-projects.
 add_subdirectory ("Gorgon")
+add_subdirectory ("third_party/glfw")
