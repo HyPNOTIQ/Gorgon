@@ -14,3 +14,5 @@ project ("Gorgon")
 # Include sub-projects.
 add_subdirectory ("Gorgon")
 add_subdirectory ("third_party/glfw")
+add_subdirectory ("third_party/fmt")
+add_subdirectory ("third_party/vk-bootstrap")

@@ -5,7 +5,7 @@
 # Add source to this project's executable.
 add_executable (Gorgon "Gorgon.cpp" "Gorgon.h")
 
-target_link_libraries(Gorgon "glfw")
+target_link_libraries(Gorgon "glfw" "fmt" "vk-bootstrap")
 
 if (CMAKE_VERSION VERSION_GREATER 3.12)
   set_property(TARGET Gorgon PROPERTY CXX_STANDARD 20)
