@@ -1,7 +1,7 @@
 ﻿# CMakeList.txt : Top-level CMake project file, do global configuration
 # and include sub-projects here.
 #
-cmake_minimum_required (VERSION 3.8)
+cmake_minimum_required (VERSION 3.12)
 
 # Enable Hot Reload for MSVC compilers if supported.
 if (POLICY CMP0141)
@@ -18,3 +18,5 @@ add_subdirectory ("third_party/fmt")
 add_subdirectory ("third_party/vk-bootstrap")
 add_subdirectory ("third_party/glm")
 add_subdirectory ("third_party/GSL")
+add_subdirectory ("third_party/Vulkan-Hpp")
+add_subdirectory ("third_party/volk")
