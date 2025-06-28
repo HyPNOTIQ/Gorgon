@@ -1,17 +1,14 @@
-﻿#include <GLFW/glfw3.h>
+﻿#define GLFW_INCLUDE_VULKAN
+#include <GLFW/glfw3.h>
 #include "fmt/ostream.h"
 #include <iostream>
-//#include <VkBootstrap.h>
 #include <thread>
 #include <atomic>
-#include <glm/glm.hpp>
+#include <ranges>
 #include <gsl/gsl>
-//#define VOLK_IMPLEMENTATION
-//#include <volk.h>
 
 #define VULKAN_HPP_NO_CONSTRUCTORS
 #define VULKAN_HPP_DISPATCH_LOADER_DYNAMIC 1
-//#include <vulkan/vulkan.hpp>
 #include <vulkan/vulkan_raii.hpp>
 
 VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
@@ -26,11 +23,7 @@ void GlfwErrorCallback(
 	fmt::println(std::cerr, "GLFW Error {}: {}", ErrorCode, Description);
 }
 
-//const std::vector<const char*> validationLayers = {
-//	"VK_LAYER_KHRONOS_validation"
-//};
-
-//#define VKCONFIG
+#define VKCONFIG
 
 #ifndef VKCONFIG
 VKAPI_ATTR vk::Bool32 VKAPI_CALL DebugMessageFunc(
@@ -50,6 +43,10 @@ VKAPI_ATTR vk::Bool32 VKAPI_CALL DebugMessageFunc(
 
 std::atomic<bool> StopRenderThread(false);
 
+const std::vector<const char*> deviceExtensions = {
+	vk::KHRSwapchainExtensionName
+};
+
 std::vector<const char*> GetRequiredExtensions() {
 	uint32_t GlfwExtensionCount;
 	const auto GlfwExtensions = glfwGetRequiredInstanceExtensions(&GlfwExtensionCount);
@@ -63,7 +60,7 @@ std::vector<const char*> GetRequiredExtensions() {
 	return Extensions;
 }
 
-void RenderThreadFunc()
+void RenderThreadFunc(GLFWwindow* const Window)
 {
 	VULKAN_HPP_DEFAULT_DISPATCHER.init();
 
@@ -88,13 +85,18 @@ void RenderThreadFunc()
 		.pNext = &DebugUtilsMessengerCreateInfo,
 #endif // !VKCONFIG
 		.pApplicationInfo = &ApplicationInfo,
-		//.enabledLayerCount = static_cast<decltype(VkInstanceCreateInfo::enabledLayerCount)>(validationLayers.size()),
-		//.ppEnabledLayerNames = validationLayers.data(),
-		.enabledExtensionCount = static_cast<decltype(VkInstanceCreateInfo::enabledExtensionCount)>(RequiredExtensions.size()),
+		.enabledExtensionCount = uint32_t(RequiredExtensions.size()),
 		.ppEnabledExtensionNames = RequiredExtensions.data(),
 	};
 
 	const auto Instance = vk::raii::Instance(Context, InstanceCreateInfo);
+
+	const auto Surface = [&] {
+		VkSurfaceKHR surface;
+		glfwCreateWindowSurface(*Instance, Window, nullptr, &surface);
+
+		return vk::raii::SurfaceKHR(Instance, surface);
+	}();
 
 #ifndef VKCONFIG
 	const auto DebugUtilsMessenger = vk::raii::DebugUtilsMessengerEXT(Instance, DebugUtilsMessengerCreateInfo);
@@ -102,14 +104,58 @@ void RenderThreadFunc()
 
 	VULKAN_HPP_DEFAULT_DISPATCHER.init(*Instance);
 	const auto PhysicalDevices = Instance.enumeratePhysicalDevices();
+	const auto& PhysicalDevice = PhysicalDevices[0];
 
-	//const vk::DeviceCreateInfo DeviceCreateInfo = VkDeviceCreateInfo{
-	//	.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
-	//};
+	const auto QueueFamilyProperties = PhysicalDevice.getQueueFamilyProperties();
 
-	//vk::raii::Device Device = PhysicalDevices[0].createDevice(DeviceCreateInfo);
-	// 
-	//VULKAN_HPP_DEFAULT_DISPATCHER.init(*Device);
+	// TODO: separate graphics and present case
+	const uint32_t GraphicsQueueFamilyIndex = [&] {
+		for (const auto [index, value] : std::views::enumerate(QueueFamilyProperties)) {
+			const auto QueueFamilyIndex = uint32_t(index);
+
+			if (value.queueFlags & vk::QueueFlagBits::eGraphics &&
+				glfwGetPhysicalDevicePresentationSupport(*Instance, *PhysicalDevice, QueueFamilyIndex) == GLFW_TRUE)
+			{
+				return QueueFamilyIndex;
+			}
+		}
+
+		assert(false);
+		return uint32_t{};
+	}();
+
+	const auto queuePriority = 1.0f;
+	const auto GraphicsQueueCreateInfo = vk::DeviceQueueCreateInfo{
+		.queueFamilyIndex = GraphicsQueueFamilyIndex,
+		.queueCount = 1,
+		.pQueuePriorities = &queuePriority,
+	};
+
+	const std::vector<vk::DeviceQueueCreateInfo> queueCreateInfos = { GraphicsQueueCreateInfo };
+
+	const auto DeviceCreateInfo = vk::DeviceCreateInfo{
+		.queueCreateInfoCount = uint32_t(queueCreateInfos.size()),
+		.pQueueCreateInfos = queueCreateInfos.data(),
+		.enabledExtensionCount = uint32_t(deviceExtensions.size()),
+		.ppEnabledExtensionNames = deviceExtensions.data()
+	};
+
+	const auto Device = PhysicalDevice.createDevice(DeviceCreateInfo);
+
+	VULKAN_HPP_DEFAULT_DISPATCHER.init(*Device);
+
+	//const auto SurfaceFormat = [&] {
+	//	PhysicalDevice.getSurfaceFormatsKHR(Surface);
+	//}();
+
+	const auto SwapchainCreateInfo = vk::SwapchainCreateInfoKHR{
+		.surface = *Surface,
+		//.imageFormat = 
+	};
+
+	const auto Swapchain = Device.createSwapchainKHR(SwapchainCreateInfo);
+
+	const auto GraphicsQueue = Device.getQueue(GraphicsQueueFamilyIndex, 0);
 
 	while (!StopRenderThread.load())
 	{
@@ -138,7 +184,7 @@ int main() {
 
 	const auto GlfwWindowGuard = gsl::finally([&] { glfwDestroyWindow(Window); });
 
-	const auto RenderThread = std::jthread(RenderThreadFunc);
+	const auto RenderThread = std::jthread(RenderThreadFunc, Window);
 
 	while (!glfwWindowShouldClose(Window))
 	{
