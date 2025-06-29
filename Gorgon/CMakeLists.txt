@@ -3,13 +3,10 @@
 #
 
 # Add source to this project's executable.
-add_executable (Gorgon "Gorgon.cpp" "Gorgon.h")
+add_executable (Gorgon "Gorgon.cpp" )
 
 target_include_directories(Gorgon PRIVATE "$ENV{VULKAN_SDK}/Include")
-target_link_libraries(Gorgon "glfw" "fmt")
-target_link_libraries(Gorgon Microsoft.GSL::GSL)
-# target_link_libraries(Gorgon Vulkan::Headers)
-
+target_link_libraries(Gorgon PRIVATE fmt glfw Microsoft.GSL::GSL)
 
 if (CMAKE_VERSION VERSION_GREATER 3.12)
   set_property(TARGET Gorgon PROPERTY CXX_STANDARD 23)
