@@ -2,14 +2,12 @@
 # project specific logic here.
 #
 
-# Add source to this project's executable.
-add_executable (Gorgon "Gorgon.cpp" )
+add_executable (Gorgon "Gorgon.cpp"  "pch.h")
+target_precompile_headers(Gorgon PRIVATE "pch.h")
 
 target_include_directories(Gorgon PRIVATE "$ENV{VULKAN_SDK}/Include")
 target_link_libraries(Gorgon PRIVATE fmt glfw Microsoft.GSL::GSL)
 
-if (CMAKE_VERSION VERSION_GREATER 3.12)
-  set_property(TARGET Gorgon PROPERTY CXX_STANDARD 23)
-endif()
+set_property(TARGET Gorgon PROPERTY CXX_STANDARD 23)
 
 # TODO: Add tests and install targets if needed.
