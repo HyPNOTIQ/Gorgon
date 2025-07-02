@@ -1,21 +1,24 @@
 ﻿#define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
-#include "fmt/ostream.h"
+#include <fmt/ostream.h>
 #include <iostream>
 #include <thread>
 #include <atomic>
 #include <ranges>
 #include <gsl/gsl>
+#include <utility>
 
 #define VULKAN_HPP_NO_CONSTRUCTORS
 #define VULKAN_HPP_DISPATCH_LOADER_DYNAMIC 1
 #include <vulkan/vulkan_raii.hpp>
+#include <vulkan/utility/vk_small_containers.hpp>
 
 VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 
 constexpr auto WIDTH = 800u;
 constexpr auto HEIGHT = 600u;
-constexpr auto MAX_PENDING_FRAMES = 3u;
+constexpr auto MAX_PENDING_FRAMES = 2u;
+constexpr auto UINT64_MAX_VALUE = std::numeric_limits<uint64_t>::max();
 
 void GlfwErrorCallback(
 	const int ErrorCode,
@@ -26,31 +29,43 @@ void GlfwErrorCallback(
 
 #define VKCONFIG
 
-#ifndef VKCONFIG
-VKAPI_ATTR vk::Bool32 VKAPI_CALL DebugMessageFunc(
-	const vk::DebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
-	const vk::DebugUtilsMessageTypeFlagsEXT messageTypes,
-	const vk::DebugUtilsMessengerCallbackDataEXT* const pCallbackData,
-	void* /*pUserData*/)
+namespace vk
 {
-	if (messageSeverity & vk::DebugUtilsMessageSeverityFlagBitsEXT::eError)
+	template <typename T>
+	concept Chainable = requires(T t) {
+		{ t.pNext } -> std::convertible_to<const void*>;
+	};
+
+	template<typename... Ts>
+	concept AllChainable = (Chainable<Ts> && ...);
+
+	template <AllChainable... ChainElements>
+	auto createStructureChain(ChainElements const... elems)
 	{
-		fmt::println(std::clog, "{}", pCallbackData->pMessage);
+		return vk::StructureChain<ChainElements...>(elems...);
+		//return vk::StructureChain<ChainElements...>(std::forward<ChainElements>(elems)...); // TODO: check && universal ref
 	}
 
-	return VK_FALSE;
-}
+	const auto deviceExtensions = {
+		vk::KHRSwapchainExtensionName,
+	};
+
+#ifndef VKCONFIG
+	VKAPI_ATTR vk::Bool32 VKAPI_CALL DebugMessageFunc(
+		const vk::DebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
+		const vk::DebugUtilsMessageTypeFlagsEXT messageTypes,
+		const vk::DebugUtilsMessengerCallbackDataEXT* const pCallbackData,
+		void* /*pUserData*/)
+	{
+		if (messageSeverity & vk::DebugUtilsMessageSeverityFlagBitsEXT::eError)
+		{
+			fmt::println(std::clog, "{}", pCallbackData->pMessage);
+		}
+
+		return VK_FALSE;
+	}
 #endif // !VKCONFIG
-
-std::atomic<bool> StopRenderThread(false);
-
-const auto deviceExtensions = {
-	vk::KHRSwapchainExtensionName,
-
-	// TODO
-	//vk::EXTSwapchainMaintenance1ExtensionName,
-	//vk::EXTSurfaceMaintenance1ExtensionName, 
-};
+}
 
 std::vector<const char*> GetRequiredExtensions() {
 	uint32_t GlfwExtensionCount;
@@ -58,14 +73,29 @@ std::vector<const char*> GetRequiredExtensions() {
 
 	auto Extensions = std::vector<const char*>(GlfwExtensions, GlfwExtensions + GlfwExtensionCount);
 
-#if !defined(VKCONFIG) && !defined(NDEBUG)
-	Extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
-#endif // !defined(VKCONFIG) && !defined(NDEBUG)
+#if !defined(NDEBUG)
+	Extensions.push_back(vk::EXTDebugUtilsExtensionName); // for debug object names
+#endif // !defined(NDEBUG)
 
 	return Extensions;
 }
 
-void RenderThreadFunc(GLFWwindow* const Window)
+void SetDebugUtilsObjectName(
+	const vk::raii::Device& device,
+	const vk::ObjectType objectType,
+	const uint64_t objectHandle,
+	const char* const ObjectName) {
+#ifndef NDEBUG
+	const auto PresentQueuedebugName = vk::DebugUtilsObjectNameInfoEXT{
+		.objectType = objectType,
+		.objectHandle = objectHandle,
+		.pObjectName = ObjectName,
+	};
+	device.setDebugUtilsObjectNameEXT(PresentQueuedebugName);
+#endif // !NDEBUG
+}
+
+void RenderThreadFunc(std::stop_token stop_token, GLFWwindow* const Window)
 {
 	VULKAN_HPP_DEFAULT_DISPATCHER.init();
 
@@ -77,7 +107,7 @@ void RenderThreadFunc(GLFWwindow* const Window)
 	const auto DebugUtilsMessengerCreateInfo = vk::DebugUtilsMessengerCreateInfoEXT{
 		.messageSeverity = ~vk::DebugUtilsMessageSeverityFlagsEXT(),
 		.messageType = ~vk::DebugUtilsMessageTypeFlagsEXT() ^ vk::DebugUtilsMessageTypeFlagBitsEXT::eDeviceAddressBinding,
-		.pfnUserCallback = DebugMessageFunc,
+		.pfnUserCallback = vk::DebugMessageFunc,
 	};
 #endif // !VKCONFIG
 
@@ -96,68 +126,172 @@ void RenderThreadFunc(GLFWwindow* const Window)
 		return vk::raii::Instance(Context, CreateInfo);
 	}();
 
+#ifndef VKCONFIG
+	const auto DebugUtilsMessenger = vk::raii::DebugUtilsMessengerEXT(Instance, DebugUtilsMessengerCreateInfo);
+#endif // !VKCONFIG
+
 	const auto Surface = [&] {
 		VkSurfaceKHR surface;
+
+		// TODO: handle return value
 		glfwCreateWindowSurface(*Instance, Window, nullptr, &surface);
 
 		return vk::raii::SurfaceKHR(Instance, surface);
 	}();
 
-#ifndef VKCONFIG
-	const auto DebugUtilsMessenger = vk::raii::DebugUtilsMessengerEXT(Instance, DebugUtilsMessengerCreateInfo);
-#endif // !VKCONFIG
-
 	VULKAN_HPP_DEFAULT_DISPATCHER.init(*Instance);
 	const auto PhysicalDevices = Instance.enumeratePhysicalDevices();
 	const auto& PhysicalDevice = PhysicalDevices[0];
 
-	const auto QueueFamilyProperties = PhysicalDevice.getQueueFamilyProperties();
+	const auto queueFamilyIndices = [&] {
+		const auto QueueFamilyProperties = PhysicalDevice.getQueueFamilyProperties2();
 
-	// TODO: handle separate graphics and present case
-	const uint32_t GraphicsQueueFamilyIndex = [&] {
-		for (const auto [index, value] : std::views::enumerate(QueueFamilyProperties)) {
-			const auto QueueFamilyIndex = uint32_t(index);
+		struct QueueFamilyIndices
+		{
+			QueueFamilyIndices(const uint32_t graphicsVal, const uint32_t presentVal)
+				: Graphics(graphicsVal), Present(presentVal), same(graphicsVal == presentVal) {}
 
-			if (value.queueFlags & vk::QueueFlagBits::eGraphics &&
-				glfwGetPhysicalDevicePresentationSupport(*Instance, *PhysicalDevice, QueueFamilyIndex) == GLFW_TRUE)
-			{
-				return QueueFamilyIndex;
+			uint32_t Graphics;
+			uint32_t Present;
+			bool same;
+		};
+
+		const auto supportsGraphics = [&](const vk::QueueFamilyProperties2& properties) {
+			return bool(properties.queueFamilyProperties.queueFlags & vk::QueueFlagBits::eGraphics);
+		};
+
+		const auto supportsPresent = [&](const uint32_t index) {
+			return glfwGetPhysicalDevicePresentationSupport(*Instance, *PhysicalDevice, index) == GLFW_TRUE;
+		};
+
+		const auto findSeparate = [&] -> std::optional<QueueFamilyIndices> {
+			const auto graphicsQueues = [&] {
+				const auto filter = [&](const std::pair<size_t, vk::QueueFamilyProperties2>& pair) {
+					return supportsGraphics(pair.second);
+				};
+
+				const auto transform = [](const std::pair<size_t, vk::QueueFamilyProperties2>& pair) {
+					return uint32_t(pair.first);
+				};
+
+				return QueueFamilyProperties
+					| std::views::enumerate
+					| std::views::filter(filter)
+					| std::views::transform(transform)
+					| std::ranges::to<std::vector<uint32_t>>();
+			}();
+
+			const auto presentQueues = [&] {
+				return std::views::iota(0u, QueueFamilyProperties.size())
+					| std::views::filter(supportsPresent)
+					| std::ranges::to<std::vector<uint32_t>>();
+			}();
+
+			for (const uint32_t graphicsQueueIndex : graphicsQueues) {
+				for (const uint32_t presentQueueIndex : presentQueues) {
+					if (graphicsQueueIndex != presentQueueIndex) {
+
+						return std::make_optional(QueueFamilyIndices(graphicsQueueIndex, presentQueueIndex));
+					}
+				}
 			}
-		}
 
-		assert(false);
-		return uint32_t{};
+			return std::nullopt;
+		};
+
+		const auto find = [&] {
+
+			for (const auto& [index, value] : std::views::enumerate(QueueFamilyProperties)) {
+				const auto queueFamilyIndex = uint32_t(index);
+
+				if (supportsGraphics(value) && supportsPresent(queueFamilyIndex))
+				{
+					return QueueFamilyIndices(queueFamilyIndex, queueFamilyIndex);
+				}
+			}
+
+			// TODO
+			assert(false);
+			return QueueFamilyIndices(0,0);
+		};
+
+		constexpr auto forceSeparate = true;
+
+		return forceSeparate ? findSeparate().value_or(find()) : find();
 	}();
 
 	const auto queuePriority = 1.0f;
 	const auto GraphicsQueueCreateInfo = vk::DeviceQueueCreateInfo{
-		.queueFamilyIndex = GraphicsQueueFamilyIndex,
+		.queueFamilyIndex = queueFamilyIndices.Graphics,
 		.queueCount = 1,
 		.pQueuePriorities = &queuePriority,
 	};
 
-	const std::vector<vk::DeviceQueueCreateInfo> queueCreateInfos = { GraphicsQueueCreateInfo };
-
-
-	const auto PhysicalDeviceSwapchainMaintenance1FeaturesEXT = vk::PhysicalDeviceSwapchainMaintenance1FeaturesEXT{
-		.swapchainMaintenance1 = true,
+	const auto PresentQueueCreateInfo = vk::DeviceQueueCreateInfo{
+		.queueFamilyIndex = queueFamilyIndices.Present,
+		.queueCount = 1,
+		.pQueuePriorities = &queuePriority,
 	};
 
-	const auto PhysicalDeviceDynamicRenderingFeatures = vk::PhysicalDeviceDynamicRenderingFeatures{
-		.pNext = const_cast<vk::PhysicalDeviceSwapchainMaintenance1FeaturesEXT*>(&PhysicalDeviceSwapchainMaintenance1FeaturesEXT),
-		.dynamicRendering = true,
-	};
+	// TODO
+	std::vector<vk::DeviceQueueCreateInfo> queueCreateInfos = { GraphicsQueueCreateInfo, PresentQueueCreateInfo };
 
-	const auto DeviceCreateInfo = vk::DeviceCreateInfo{
-		.pNext = &PhysicalDeviceDynamicRenderingFeatures,
-	}
-	.setQueueCreateInfos(queueCreateInfos)
-	.setPEnabledExtensionNames(deviceExtensions)
-	;
+	// Step 1: Sort the vector
+	std::ranges::sort(queueCreateInfos);
 
-	const auto Device = PhysicalDevice.createDevice(DeviceCreateInfo);
+	// Step 2: Use std::ranges::unique to move duplicates to the end
+	auto [first, last] = std::ranges::unique(queueCreateInfos);
 
+	// Step 3: Erase the duplicates
+	queueCreateInfos.erase(first, last);
+
+	//const auto queueCreateInfos = { GraphicsQueueCreateInfo, PresentQueueCreateInfo };
+
+	const auto DeviceCreateInfoChain = createStructureChain(
+		vk::DeviceCreateInfo{}
+			.setQueueCreateInfos(queueCreateInfos)
+			.setPEnabledExtensionNames(vk::deviceExtensions),
+		vk::PhysicalDeviceFeatures2{
+			.features = {
+				//.geometryShader = true,
+			}
+		},
+		vk::PhysicalDeviceVulkan12Features{
+			.timelineSemaphore = true,
+		},
+		vk::PhysicalDeviceVulkan13Features{
+			.synchronization2 = true,
+			.dynamicRendering = true,
+		},
+		// check how to replace with core vulkan
+		vk::PhysicalDeviceSwapchainMaintenance1FeaturesEXT{
+			.swapchainMaintenance1 = true,
+		}
+	);
+
+	const auto Device = PhysicalDevice.createDevice(DeviceCreateInfoChain.get<vk::DeviceCreateInfo>());
 	VULKAN_HPP_DEFAULT_DISPATCHER.init(*Device);
+
+	const auto GraphicsQueue = Device.getQueue(queueFamilyIndices.Graphics, 0);
+	const auto PresentQueue = Device.getQueue(queueFamilyIndices.Present, 0);
+
+#ifndef NDEBUG
+	// TODO: create question on Vulkan-hpp github
+	const auto GraphicsQueuedebugName = vk::DebugUtilsObjectNameInfoEXT{
+		.objectType = vk::ObjectType::eQueue,
+		.objectHandle = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(VkQueue(*GraphicsQueue))),
+		.pObjectName = "GraphicsQueue",
+	};
+	Device.setDebugUtilsObjectNameEXT(GraphicsQueuedebugName);
+
+	const auto PresentQueuedebugName = vk::DebugUtilsObjectNameInfoEXT{
+	.objectType = vk::ObjectType::eQueue,
+	.objectHandle = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(VkQueue(*PresentQueue))),
+	.pObjectName = "GraphicsQueue",
+	};
+	Device.setDebugUtilsObjectNameEXT(PresentQueuedebugName);
+	// ~TODO
+#endif // !NDEBUG
 
 	const auto SurfaceCapabilities = PhysicalDevice.getSurfaceCapabilitiesKHR(Surface);
 
@@ -239,23 +373,27 @@ void RenderThreadFunc(GLFWwindow* const Window)
 
 	const auto Swapchain = Device.createSwapchainKHR(SwapchainCreateInfo);
 
-	const auto GraphicsQueue = Device.getQueue(GraphicsQueueFamilyIndex, 0);
-
-	// TODO
-	const auto PresentQueue = Device.getQueue(GraphicsQueueFamilyIndex, 0);
-
-	const auto CommandPool = [&] {
+	const auto graphicsCommandPool = [&] {
 		const auto CreateInfo = vk::CommandPoolCreateInfo{
 			.flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer | vk::CommandPoolCreateFlagBits::eTransient,
-			.queueFamilyIndex = GraphicsQueueFamilyIndex,
+			.queueFamilyIndex = queueFamilyIndices.Graphics,
 		};
 
 		return Device.createCommandPool(CreateInfo);
 	}();
 
-	const auto CommandBuffers = [&] {
+	const auto presentCommandPool = [&] {
+		const auto CreateInfo = vk::CommandPoolCreateInfo{
+			.flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer | vk::CommandPoolCreateFlagBits::eTransient,
+			.queueFamilyIndex = queueFamilyIndices.Present,
+		};
+
+		return Device.createCommandPool(CreateInfo);
+	}();
+
+	const auto renderCommandBuffers = [&] {
 		const auto CreateInfo = vk::CommandBufferAllocateInfo{
-			.commandPool = *CommandPool,
+			.commandPool = *graphicsCommandPool,
 			.level = vk::CommandBufferLevel::ePrimary,
 			.commandBufferCount = MAX_PENDING_FRAMES,
 		};
@@ -263,38 +401,14 @@ void RenderThreadFunc(GLFWwindow* const Window)
 		return Device.allocateCommandBuffers(CreateInfo);
 	}();
 
-	// TODO: https://en.cppreference.com/w/cpp/container/inplace_vector.html
-	const auto acquireNextImageSemaphores = [&] {
-		std::vector<vk::raii::Semaphore> Result;
-		Result.reserve(MAX_PENDING_FRAMES);
+	const auto presentCommandBuffers = [&] {
+		const auto CreateInfo = vk::CommandBufferAllocateInfo{
+			.commandPool = *presentCommandPool,
+			.level = vk::CommandBufferLevel::ePrimary,
+			.commandBufferCount = MAX_PENDING_FRAMES,
+		};
 
-		const auto CreateInfo = vk::SemaphoreCreateInfo{};
-
-		std::generate_n(std::back_inserter(Result), MAX_PENDING_FRAMES, [&] { return Device.createSemaphore(CreateInfo); });
-
-		return Result;
-	}();
-
-	const auto renderFinishedSemaphores = [&] {
-		std::vector<vk::raii::Semaphore> Result;
-		Result.reserve(MAX_PENDING_FRAMES);
-
-		const auto CreateInfo = vk::SemaphoreCreateInfo{};
-
-		std::generate_n(std::back_inserter(Result), MAX_PENDING_FRAMES, [&] { return Device.createSemaphore(CreateInfo); });
-
-		return Result;
-	}();
-
-	const auto presentFences = [&] {
-		std::vector<vk::raii::Fence> Result;
-		Result.reserve(MAX_PENDING_FRAMES);
-
-		const auto CreateInfo = vk::FenceCreateInfo{ .flags = vk::FenceCreateFlagBits::eSignaled, };
-
-		std::generate_n(std::back_inserter(Result), MAX_PENDING_FRAMES, [&] { return Device.createFence(CreateInfo); });
-
-		return Result;
+		return Device.allocateCommandBuffers(CreateInfo);
 	}();
 
 	const auto swapChainImages = Swapchain.getImages();
@@ -321,151 +435,287 @@ void RenderThreadFunc(GLFWwindow* const Window)
 			| std::ranges::to<std::vector>();
 	}();
 
-	auto currentFrame = 0u;
-	while (not StopRenderThread.load())
+	const auto frameSynchronizations = [&]
+	{
+		struct FrameSynchronization
+		{
+			vk::raii::Semaphore acquireNextImage;
+			//vk::raii::Semaphore render; // TODO use timeline semaphore
+			vk::raii::Semaphore prePresent;
+			vk::raii::Semaphore timeline;
+			vk::raii::Fence present;
+		};
+
+		// TODO
+		//vku::small::vector<FrameSynchronization, MAX_PENDING_FRAMES> Result;
+
+		std::vector<FrameSynchronization> Result;
+		Result.reserve(MAX_PENDING_FRAMES);
+
+		const auto generateFunc = [&]
+		{
+			return FrameSynchronization{
+				.acquireNextImage = [&] {
+					const auto CreateInfo = vk::SemaphoreCreateInfo{};
+					return Device.createSemaphore(CreateInfo);
+				}(),
+				//.render = [&] {
+				//	const auto CreateInfo = vk::SemaphoreCreateInfo{};
+				//	return Device.createSemaphore(CreateInfo);
+				//}(),
+				.prePresent = [&] {
+					const auto CreateInfo = vk::SemaphoreCreateInfo{};
+					return Device.createSemaphore(CreateInfo);
+				}(),
+				.timeline = [&] {
+					const auto typeCreateInfo = vk::SemaphoreTypeCreateInfo {
+						.semaphoreType = vk::SemaphoreType::eTimeline,
+						.initialValue = 0,
+					};
+
+					const auto CreateInfo = vk::SemaphoreCreateInfo{ .pNext = &typeCreateInfo };
+					return Device.createSemaphore(CreateInfo);
+				}(),
+				.present = [&] {
+					const auto CreateInfo = vk::FenceCreateInfo{.flags = vk::FenceCreateFlagBits::eSignaled };
+					return Device.createFence(CreateInfo);
+				}(),
+			};
+		};
+
+		// TODO: rewrite without temp container usage std::ranges::generate_n
+		// TODO: https://en.cppreference.com/w/cpp/container/inplace_vector.html
+		//return std::views::iota(0u, MAX_PENDING_FRAMES)
+		//	| std::views::transform([&](auto) { return generateFunc(); })
+		//	| std::ranges::to<vku::small::vector<FrameSynchronization, MAX_PENDING_FRAMES>>();
+
+
+		std::generate_n(std::back_inserter(Result), MAX_PENDING_FRAMES, generateFunc);
+
+		return Result;
+	}();
+
+	auto frameNumber = 0u;
+
+	while (not stop_token.stop_requested())
+	//while (frameNumber < MAX_PENDING_FRAMES * 2)
 	{
 		//fmt::println(std::clog, "Render Thread");
+		const auto frameIndex = frameNumber % MAX_PENDING_FRAMES;
 
-		const auto& acquireNextImageSemaphore = acquireNextImageSemaphores[currentFrame];
-		const auto& renderFinishedSemaphore = renderFinishedSemaphores[currentFrame];
+		// TODO: create somesort of class with update(frameNumber) to simplify usage
+		enum FrameTimeline : uint64_t {
+			eRender = 1,
+			ePrePresent,
+			eMax = ePrePresent
+		};
 
-		const auto& presentFence = presentFences[currentFrame];
-		Device.waitForFences({ *presentFence }, true, std::numeric_limits<uint64_t>::max());
-		Device.resetFences({ *presentFence });
+		const auto& frameSynchronization = frameSynchronizations[frameIndex];
+
+		// TODO handle result value
+		Device.waitForFences({ *frameSynchronization.present }, true, UINT64_MAX_VALUE);
+		Device.resetFences({ *frameSynchronization.present });
 
 		const auto NextImage = [&] {
 			const auto Result = Swapchain.acquireNextImage(
-				std::numeric_limits<uint64_t>::max(),
-				acquireNextImageSemaphore
+				UINT64_MAX_VALUE,
+				frameSynchronization.acquireNextImage
 			);
 
 			assert(Result.first == vk::Result::eSuccess);
 			return Result.second;
 		}();
 
-		const auto& CommandBuffer = CommandBuffers[currentFrame];
-		CommandBuffer.reset();
-
-		CommandBuffer.begin(vk::CommandBufferBeginInfo{});
-
-		const auto ColorAttachments = {
-			vk::RenderingAttachmentInfo{
-				.imageView = swapChainImageViews[NextImage],
-				.imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
-				.loadOp = vk::AttachmentLoadOp::eClear,
-				.storeOp = vk::AttachmentStoreOp::eStore,
-				.clearValue = { .color = std::to_array({0.5f, 0.5f, 0.5f, 1.0f}) },
-			},
-		};
-
-		const auto RenderingInfo = vk::RenderingInfo{
-			.renderArea = vk::Rect2D{ .extent = ImageExtent, },
+		constexpr auto COLOR_SUBRESOURCE_RANGE = vk::ImageSubresourceRange{
+			.aspectMask = vk::ImageAspectFlagBits::eColor,
+			.levelCount = 1,
 			.layerCount = 1,
-		}.setColorAttachments(ColorAttachments);
-
-		const auto toAttachmentBarrier = vk::ImageMemoryBarrier{
-			.dstAccessMask = vk::AccessFlagBits::eColorAttachmentWrite,
-			.oldLayout = vk::ImageLayout::eUndefined,
-			.newLayout = vk::ImageLayout::eColorAttachmentOptimal,
-			.srcQueueFamilyIndex = vk::QueueFamilyIgnored,
-			.dstQueueFamilyIndex = vk::QueueFamilyIgnored,
-			.image = swapChainImages[NextImage],
-			.subresourceRange = {
-				.aspectMask = vk::ImageAspectFlagBits::eColor,
-				.levelCount = 1,
-				.layerCount = 1,
-			},
 		};
 
-		CommandBuffer.pipelineBarrier(
-			vk::PipelineStageFlagBits::eTopOfPipe,
-			vk::PipelineStageFlagBits::eColorAttachmentOutput,
-			{}, // dependencyFlags
-			{}, // memoryBarriers
-			{}, // bufferMemoryBarriers
-			{ toAttachmentBarrier } // imageMemoryBarriers
-		);
+		// render
+		{
+			const auto& commandBuffer = renderCommandBuffers[frameIndex];
+			commandBuffer.reset();
+			
+			const auto& swapchainImage = swapChainImages[NextImage];
 
-		CommandBuffer.beginRendering(RenderingInfo);
-		CommandBuffer.endRendering();
+			// record command buffer
+			{
+				commandBuffer.begin(vk::CommandBufferBeginInfo{ .flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit });
 
-		swapChainImageViews[NextImage].getDevice();
+				// to VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
+				{
+					const auto toAttachmentBarrier = vk::ImageMemoryBarrier2{
+						.srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+						//.srcAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite,
+						.dstStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+						.dstAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite,
+						.oldLayout = vk::ImageLayout::eUndefined,
+						.newLayout = vk::ImageLayout::eColorAttachmentOptimal,
+						.srcQueueFamilyIndex = vk::QueueFamilyIgnored,
+						.dstQueueFamilyIndex = vk::QueueFamilyIgnored,
+						.image = swapchainImage,
+						.subresourceRange = COLOR_SUBRESOURCE_RANGE,
+					};
 
-		// TODO: check VK_KHR_synchronization2
-		const auto toPresentBarrier = vk::ImageMemoryBarrier{
-			.srcAccessMask = vk::AccessFlagBits::eColorAttachmentWrite,
-			.oldLayout = vk::ImageLayout::eColorAttachmentOptimal,
-			.newLayout = vk::ImageLayout::ePresentSrcKHR,
-			.srcQueueFamilyIndex = vk::QueueFamilyIgnored,
-			.dstQueueFamilyIndex = vk::QueueFamilyIgnored,
-			.image = swapChainImages[NextImage],
-			.subresourceRange = {
-				.aspectMask = vk::ImageAspectFlagBits::eColor,
-				.levelCount = 1,
-				.layerCount = 1,
-			},
-		};
+					const auto dependencyInfo = vk::DependencyInfo{}.setImageMemoryBarriers(toAttachmentBarrier);
+					commandBuffer.pipelineBarrier2(dependencyInfo);
+				}
 
-		CommandBuffer.pipelineBarrier(
-			vk::PipelineStageFlagBits::eColorAttachmentOutput,
-			vk::PipelineStageFlagBits::eBottomOfPipe,
-			{}, // dependencyFlags
-			{}, // memoryBarriers
-			{}, // bufferMemoryBarriers
-			{ toPresentBarrier } // imageMemoryBarriers
-		);
+				const auto colorAttachments = {
+					vk::RenderingAttachmentInfo{
+						.imageView = swapChainImageViews[NextImage],
+						.imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
+						.loadOp = vk::AttachmentLoadOp::eClear,
+						.storeOp = vk::AttachmentStoreOp::eStore,
+						.clearValue = { .color = std::to_array({0.5f, 0.5f, 0.5f, 1.0f}) },
+					},
+				};
 
-		CommandBuffer.end();
+				const auto renderingInfo = vk::RenderingInfo{
+					.renderArea = vk::Rect2D{ .extent = ImageExtent },
+					.layerCount = 1,
+				}.setColorAttachments(colorAttachments);
 
-		const auto waitSemaphores = { *acquireNextImageSemaphore };
-		const auto CommandBuffers = { *CommandBuffer };
-		const auto SignalSemaphores = { *renderFinishedSemaphore };
-		const auto WaitDstStageMask = { vk::PipelineStageFlags{ vk::PipelineStageFlagBits::eColorAttachmentOutput } };
-		
-		const auto SubmitInfo = vk::SubmitInfo{}
-			.setWaitSemaphores(waitSemaphores)
-			.setWaitDstStageMask(WaitDstStageMask)
-			.setCommandBuffers(CommandBuffers)
-			.setSignalSemaphores(SignalSemaphores)
-			;
+				commandBuffer.beginRendering(renderingInfo);
 
-		// TODO: check https://registry.khronos.org/vulkan/specs/latest/man/html/vkQueueSubmit2.html
-		GraphicsQueue.submit(SubmitInfo);
+				commandBuffer.endRendering();
 
-		const auto Swapchains = { *Swapchain };
-		const auto ImageIndices = { NextImage };
+				// to VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
+				{
+					const auto toPresentBarrier = vk::ImageMemoryBarrier2{
+						.srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+						.srcAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite,
+						//.dstStageMask = vk::PipelineStageFlagBits2::eNone,
+						.oldLayout = vk::ImageLayout::eColorAttachmentOptimal,
+						.newLayout = vk::ImageLayout::ePresentSrcKHR,
+						.srcQueueFamilyIndex = queueFamilyIndices.Graphics,
+						.dstQueueFamilyIndex = queueFamilyIndices.Present,
+						.image = swapchainImage,
+						.subresourceRange = COLOR_SUBRESOURCE_RANGE,
+					};
 
-		const auto PresentFences = { *presentFence };
-		const auto presentFenceInfo = vk::SwapchainPresentFenceInfoEXT{}.setFences(PresentFences);
+					const auto dependencyInfo = vk::DependencyInfo{}.setImageMemoryBarriers(toPresentBarrier);
+					commandBuffer.pipelineBarrier2(dependencyInfo);
+				}
 
-		PresentQueue.presentKHR(
-			vk::PresentInfoKHR{
-				.pNext = &presentFenceInfo,
+				commandBuffer.end();
 			}
-			.setWaitSemaphores(SignalSemaphores)
-			.setSwapchains(Swapchains)
-			.setImageIndices(ImageIndices)
-		);
 
-		currentFrame = (currentFrame + 1) % MAX_PENDING_FRAMES;
+			const auto waitSemaphoresInfo = vk::SemaphoreSubmitInfo{
+				.semaphore = *frameSynchronization.acquireNextImage,
+				.stageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+			};
+
+			const auto commandBufferInfo = vk::CommandBufferSubmitInfo{ .commandBuffer = *commandBuffer };
+
+			const auto signalSemaphoreInfo = vk::SemaphoreSubmitInfo{
+				.semaphore = *frameSynchronization.timeline,
+				.value = FrameTimeline::eMax * frameNumber + FrameTimeline::eRender,
+				.stageMask = vk::PipelineStageFlagBits2::eAllCommands,
+			};
+
+			const auto submitInfo = vk::SubmitInfo2{}
+				.setWaitSemaphoreInfos(waitSemaphoresInfo)
+				.setCommandBufferInfos(commandBufferInfo)
+				.setSignalSemaphoreInfos(signalSemaphoreInfo);
+
+			GraphicsQueue.submit2(submitInfo);
+		}
+
+		// pre-present
+		{
+			const auto& commandBuffer = presentCommandBuffers[frameIndex];
+
+			const auto waitSemaphoresInfo = vk::SemaphoreSubmitInfo{
+				.semaphore = *frameSynchronization.timeline,
+				.value = FrameTimeline::eMax * frameNumber + FrameTimeline::eRender,
+				.stageMask = vk::PipelineStageFlagBits2::eAllCommands,
+			};
+
+			const auto commandBufferInfo = vk::CommandBufferSubmitInfo{ .commandBuffer = *commandBuffer };
+
+			const auto signalSemaphoreInfo = {
+				vk::SemaphoreSubmitInfo{
+					.semaphore = *frameSynchronization.timeline,
+					.value = ePrePresent,
+					.stageMask = vk::PipelineStageFlagBits2::eAllCommands,
+				},
+				vk::SemaphoreSubmitInfo{
+					.semaphore = *frameSynchronization.prePresent,
+					.stageMask = vk::PipelineStageFlagBits2::eAllCommands,
+				},
+			};
+
+			const uint64_t waitSemaphoreValues = FrameTimeline::eMax * frameNumber + FrameTimeline::eRender;
+			const uint64_t signalSemaphoreValues = FrameTimeline::eMax * frameNumber + FrameTimeline::ePrePresent;
+
+			const auto submitInfo = vk::SubmitInfo2{}
+				.setWaitSemaphoreInfos(waitSemaphoresInfo)
+				.setCommandBufferInfos(commandBufferInfo)
+				.setSignalSemaphoreInfos(signalSemaphoreInfo);
+
+			commandBuffer.begin(vk::CommandBufferBeginInfo{ .flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit });
+
+			// image ownership transfer from graphics to present
+			const auto toPresentBarrier = vk::ImageMemoryBarrier2{
+				//.srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+				//.srcAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite,
+				//.dstStageMask = vk::PipelineStageFlagBits2::eNone,
+				.oldLayout = vk::ImageLayout::eColorAttachmentOptimal,
+				.newLayout = vk::ImageLayout::ePresentSrcKHR,
+				.srcQueueFamilyIndex = queueFamilyIndices.Graphics,
+				.dstQueueFamilyIndex = queueFamilyIndices.Present,
+				.image = swapChainImages[NextImage],
+				.subresourceRange = COLOR_SUBRESOURCE_RANGE,
+			};
+
+			const auto dependencyInfo = vk::DependencyInfo{}.setImageMemoryBarriers(toPresentBarrier);
+			commandBuffer.pipelineBarrier2(dependencyInfo);
+
+			commandBuffer.end();
+
+			PresentQueue.submit2(submitInfo);
+		}
+
+		// present
+		{
+			const auto presentFenceInfo = vk::SwapchainPresentFenceInfoEXT{}.setFences(*frameSynchronization.present);
+
+			const auto presentInfoChain = createStructureChain(
+				vk::PresentInfoKHR{}
+					.setWaitSemaphores(*frameSynchronization.prePresent)
+					.setSwapchains(*Swapchain)
+					.setImageIndices(NextImage),
+				vk::SwapchainPresentFenceInfoEXT{}.setFences(*frameSynchronization.present)
+			);
+
+			// TODO: check VK_KHR_present_id
+			// TODO: swapchain recreation
+			PresentQueue.presentKHR(presentInfoChain.get<vk::PresentInfoKHR>());
+		}
+
+		++frameNumber;
 	}
 
-	// TODO
-	//Device.waitForFences(
-	//	presentFences
-	//		| std::views::transform([](const auto& fence) { return *fence; })
-	//		| std::ranges::to<std::array<vk::Fence, MAX_PENDING_FRAMES>>(),
-	//	true,
-	//	std::numeric_limits<uint64_t>::max()
-	//);
+	// wait for present fences before shutdown
+	{
+		const auto fences = frameSynchronizations
+			| std::views::transform([](const auto& frameSynchronization) { return *frameSynchronization.present; })
+			| std::ranges::to<vku::small::vector<vk::Fence, MAX_PENDING_FRAMES>>(); // TODO: use std::inplace_vector C++26
+
+		Device.waitForFences(fences, true, UINT64_MAX_VALUE);
+	}
 
 	Device.waitIdle();
 }
 
 int main() {
+	//_CrtSetDbgFlag(_CRTDBG_ALLOC_MEM_DF | _CRTDBG_LEAK_CHECK_DF);
+
 	glfwSetErrorCallback(GlfwErrorCallback);
 
-	if (glfwInit() not_eq GLFW_TRUE)
+	if (glfwInit() != GLFW_TRUE)
 	{
 		fmt::println(std::cerr, "Failed to initialize GLFW");
 		return EXIT_FAILURE;
@@ -491,8 +741,6 @@ int main() {
 
 		glfwPollEvents();
 	}
-
-	StopRenderThread.store(true);
 
 	return EXIT_SUCCESS;
 }
