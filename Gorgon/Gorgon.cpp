@@ -3,10 +3,10 @@
 #include <fmt/ostream.h>
 #include <iostream>
 #include <thread>
+#include <filesystem>
 #include <atomic>
 #include <ranges>
 #include <gsl/gsl>
-#include <utility>
 
 #define VULKAN_HPP_NO_CONSTRUCTORS
 #define VULKAN_HPP_DISPATCH_LOADER_DYNAMIC 1
@@ -80,7 +80,7 @@ std::vector<const char*> GetRequiredExtensions() {
 	return Extensions;
 }
 
-void SetDebugUtilsObjectName(
+static inline void SetDebugUtilsObjectName(
 	const vk::raii::Device& device,
 	const vk::ObjectType objectType,
 	const uint64_t objectHandle,
@@ -199,25 +199,24 @@ void RenderThreadFunc(std::stop_token stop_token, GLFWwindow* const Window)
 			return std::nullopt;
 		};
 
-		const auto find = [&] {
-
+		const auto find = [&] -> std::optional<QueueFamilyIndices> {
 			for (const auto& [index, value] : std::views::enumerate(QueueFamilyProperties)) {
 				const auto queueFamilyIndex = uint32_t(index);
 
-				if (supportsGraphics(value) && supportsPresent(queueFamilyIndex))
-				{
-					return QueueFamilyIndices(queueFamilyIndex, queueFamilyIndex);
+				if (supportsGraphics(value) && supportsPresent(queueFamilyIndex)) {
+					return std::make_optional(QueueFamilyIndices(queueFamilyIndex, queueFamilyIndex));
 				}
 			}
 
 			// TODO
 			assert(false);
-			return QueueFamilyIndices(0,0);
+			return std::nullopt;
 		};
 
 		constexpr auto forceSeparate = true;
 
-		return forceSeparate ? findSeparate().value_or(find()) : find();
+		// TODO
+		return forceSeparate ? findSeparate().value_or(find().value()) : find().value();
 	}();
 
 	const auto queuePriority = 1.0f;
@@ -275,23 +274,31 @@ void RenderThreadFunc(std::stop_token stop_token, GLFWwindow* const Window)
 	const auto GraphicsQueue = Device.getQueue(queueFamilyIndices.Graphics, 0);
 	const auto PresentQueue = Device.getQueue(queueFamilyIndices.Present, 0);
 
-#ifndef NDEBUG
-	// TODO: create question on Vulkan-hpp github
-	const auto GraphicsQueuedebugName = vk::DebugUtilsObjectNameInfoEXT{
-		.objectType = vk::ObjectType::eQueue,
-		.objectHandle = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(VkQueue(*GraphicsQueue))),
-		.pObjectName = "GraphicsQueue",
-	};
-	Device.setDebugUtilsObjectNameEXT(GraphicsQueuedebugName);
+	// TODO: create question on Vulkan-hpp github about vk::ObjectType
+	if (not queueFamilyIndices.same) {
+		SetDebugUtilsObjectName(
+			Device,
+			vk::ObjectType::eQueue,
+			static_cast<uint64_t>(reinterpret_cast<uintptr_t>(VkQueue(*GraphicsQueue))),
+			"GraphicsQueue"
+		);
 
-	const auto PresentQueuedebugName = vk::DebugUtilsObjectNameInfoEXT{
-	.objectType = vk::ObjectType::eQueue,
-	.objectHandle = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(VkQueue(*PresentQueue))),
-	.pObjectName = "GraphicsQueue",
-	};
-	Device.setDebugUtilsObjectNameEXT(PresentQueuedebugName);
-	// ~TODO
-#endif // !NDEBUG
+		SetDebugUtilsObjectName(
+			Device,
+			vk::ObjectType::eQueue,
+			static_cast<uint64_t>(reinterpret_cast<uintptr_t>(VkQueue(*PresentQueue))),
+			"PresentQueue"
+		);
+	}
+	else
+	{
+		SetDebugUtilsObjectName(
+			Device,
+			vk::ObjectType::eQueue,
+			static_cast<uint64_t>(reinterpret_cast<uintptr_t>(VkQueue(*GraphicsQueue))),
+			"GraphicsPresentQueue"
+		);
+	}
 
 	const auto SurfaceCapabilities = PhysicalDevice.getSurfaceCapabilitiesKHR(Surface);
 
@@ -435,12 +442,134 @@ void RenderThreadFunc(std::stop_token stop_token, GLFWwindow* const Window)
 			| std::ranges::to<std::vector>();
 	}();
 
+
+	const auto pipelineLayout = [&] {
+		const auto createInfo = vk::PipelineLayoutCreateInfo{};
+		return Device.createPipelineLayout(createInfo);
+	};
+
+	const auto createShaderModule = [&](const std::filesystem::path& path) {
+		const auto loadSPIRV = [](const std::filesystem::path& path) {
+			auto file = std::ifstream(path, std::ios::binary | std::ios::ate);
+
+			if (!file) {
+				assert(false);
+			}
+
+			const auto size = file.tellg();
+			file.seekg(0, std::ios::beg);
+
+			if (size % sizeof(uint32_t) != 0) {
+				assert(false);
+			}
+
+			std::vector<uint32_t> buffer(size / sizeof(uint32_t));
+			if (!file.read(reinterpret_cast<char*>(buffer.data()), size)) {
+				assert(false);
+			}
+
+			return buffer;
+			};
+
+		const auto code = loadSPIRV(path);
+
+		const auto createInfo = vk::ShaderModuleCreateInfo{
+		}.setCode(code);
+
+		return Device.createShaderModule(createInfo);
+	};
+
+	// TODO: add support for VK_EXT_shader_object
+	const auto fragShaderModule = createShaderModule("shaders/triangle.frag");
+	const auto vertShaderModule = createShaderModule("shaders/triangle.vert");
+
+	const auto graphicaPipeline = [&] {
+		// Vertex input state
+		const auto vertexInputState = vk::PipelineVertexInputStateCreateInfo{};
+
+		// Input assembly
+		const auto inputAssemblyState = vk::PipelineInputAssemblyStateCreateInfo{
+			.topology = vk::PrimitiveTopology::eTriangleList,
+			.primitiveRestartEnable = false
+		};
+
+		const auto viewport = vk::Viewport{
+			.width = float(ImageExtent.width),
+			.height = float(ImageExtent.height),
+			.maxDepth = 1,
+		};
+
+		const auto scissor = vk::Rect2D{ .extent = ImageExtent };
+
+		// Viewport state
+		const auto viewportState = vk::PipelineViewportStateCreateInfo{}
+			.setViewports(viewport)
+			.setScissors(scissor);
+
+		// Rasterization State
+		const auto rasterizationState = vk::PipelineRasterizationStateCreateInfo{
+			.polygonMode = vk::PolygonMode::eFill,
+			.cullMode = vk::CullModeFlagBits::eBack,
+			.frontFace = vk::FrontFace::eClockwise,
+		};
+
+		// Multisample state
+		const auto multisampleState = vk::PipelineMultisampleStateCreateInfo{
+			.rasterizationSamples = vk::SampleCountFlagBits::e1,
+			.minSampleShading = 1.0f,
+		};
+
+		// Color blend state
+		const auto colorBlendAttachmentState = vk::PipelineColorBlendAttachmentState{
+			.colorWriteMask = ~vk::ColorComponentFlags(),
+		};
+
+		const auto colorBlendState = vk::PipelineColorBlendStateCreateInfo{
+		}.setAttachments(colorBlendAttachmentState);
+
+		// Dynamic state
+		const auto dynamicStates = {
+			vk::DynamicState::ePrimitiveTopology,
+		};
+
+		const auto dynamicState = vk::PipelineDynamicStateCreateInfo{}.setDynamicStates(dynamicStates);
+
+		// Stages
+		const auto stages = {
+			vk::PipelineShaderStageCreateInfo{
+				.stage = vk::ShaderStageFlagBits::eFragment,
+				.module = fragShaderModule,
+				.pName = "main",
+			},
+			vk::PipelineShaderStageCreateInfo{
+				.stage = vk::ShaderStageFlagBits::eVertex,
+				.module = vertShaderModule,
+				.pName = "main",
+			},
+		};
+
+		const auto pipelineRendering = vk::PipelineRenderingCreateInfo{}
+			.setColorAttachmentFormats(SurfaceFormat.format);
+
+		const auto createInfo = vk::GraphicsPipelineCreateInfo{
+			.pNext = &pipelineRendering,
+			.pVertexInputState = &vertexInputState,
+			.pInputAssemblyState = &inputAssemblyState,
+			.pViewportState = &viewportState,
+			.pRasterizationState = &rasterizationState,
+			.pMultisampleState = &multisampleState,
+			.pColorBlendState = &colorBlendState,
+			//.pDynamicState = &dynamicState,
+		}.setStages(stages);
+
+		return Device.createGraphicsPipeline(nullptr, createInfo);
+		}();
+
 	const auto frameSynchronizations = [&]
 	{
 		struct FrameSynchronization
 		{
 			vk::raii::Semaphore acquireNextImage;
-			//vk::raii::Semaphore render; // TODO use timeline semaphore
 			vk::raii::Semaphore prePresent;
 			vk::raii::Semaphore timeline;
 			vk::raii::Fence present;
@@ -459,10 +588,6 @@ void RenderThreadFunc(std::stop_token stop_token, GLFWwindow* const Window)
 					const auto CreateInfo = vk::SemaphoreCreateInfo{};
 					return Device.createSemaphore(CreateInfo);
 				}(),
-				//.render = [&] {
-				//	const auto CreateInfo = vk::SemaphoreCreateInfo{};
-				//	return Device.createSemaphore(CreateInfo);
-				//}(),
 				.prePresent = [&] {
 					const auto CreateInfo = vk::SemaphoreCreateInfo{};
 					return Device.createSemaphore(CreateInfo);
@@ -489,14 +614,12 @@ void RenderThreadFunc(std::stop_token stop_token, GLFWwindow* const Window)
 		//	| std::views::transform([&](auto) { return generateFunc(); })
 		//	| std::ranges::to<vku::small::vector<FrameSynchronization, MAX_PENDING_FRAMES>>();
 
-
 		std::generate_n(std::back_inserter(Result), MAX_PENDING_FRAMES, generateFunc);
 
 		return Result;
 	}();
 
 	auto frameNumber = 0u;
-
 	while (not stop_token.stop_requested())
 	//while (frameNumber < MAX_PENDING_FRAMES * 2)
 	{
@@ -532,12 +655,12 @@ void RenderThreadFunc(std::stop_token stop_token, GLFWwindow* const Window)
 			.layerCount = 1,
 		};
 
+		const auto& swapchainImage = swapChainImages[NextImage];
 		// render
 		{
 			const auto& commandBuffer = renderCommandBuffers[frameIndex];
 			commandBuffer.reset();
 			
-			const auto& swapchainImage = swapChainImages[NextImage];
 
 			// record command buffer
 			{
@@ -547,7 +670,6 @@ void RenderThreadFunc(std::stop_token stop_token, GLFWwindow* const Window)
 				{
 					const auto toAttachmentBarrier = vk::ImageMemoryBarrier2{
 						.srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-						//.srcAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite,
 						.dstStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
 						.dstAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite,
 						.oldLayout = vk::ImageLayout::eUndefined,
@@ -579,6 +701,9 @@ void RenderThreadFunc(std::stop_token stop_token, GLFWwindow* const Window)
 
 				commandBuffer.beginRendering(renderingInfo);
 
+				commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *graphicaPipeline);
+				commandBuffer.draw(3, 1, 0, 0);
+
 				commandBuffer.endRendering();
 
 				// to VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
@@ -586,7 +711,6 @@ void RenderThreadFunc(std::stop_token stop_token, GLFWwindow* const Window)
 					const auto toPresentBarrier = vk::ImageMemoryBarrier2{
 						.srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
 						.srcAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite,
-						//.dstStageMask = vk::PipelineStageFlagBits2::eNone,
 						.oldLayout = vk::ImageLayout::eColorAttachmentOptimal,
 						.newLayout = vk::ImageLayout::ePresentSrcKHR,
 						.srcQueueFamilyIndex = queueFamilyIndices.Graphics,
@@ -659,14 +783,11 @@ void RenderThreadFunc(std::stop_token stop_token, GLFWwindow* const Window)
 
 			// image ownership transfer from graphics to present
 			const auto toPresentBarrier = vk::ImageMemoryBarrier2{
-				//.srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-				//.srcAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite,
-				//.dstStageMask = vk::PipelineStageFlagBits2::eNone,
 				.oldLayout = vk::ImageLayout::eColorAttachmentOptimal,
 				.newLayout = vk::ImageLayout::ePresentSrcKHR,
 				.srcQueueFamilyIndex = queueFamilyIndices.Graphics,
 				.dstQueueFamilyIndex = queueFamilyIndices.Present,
-				.image = swapChainImages[NextImage],
+				.image = swapchainImage,
 				.subresourceRange = COLOR_SUBRESOURCE_RANGE,
 			};
 
@@ -678,6 +799,7 @@ void RenderThreadFunc(std::stop_token stop_token, GLFWwindow* const Window)
 			PresentQueue.submit2(submitInfo);
 		}
 
+		// TODO: not needed for non separate queues
 		// present
 		{
 			const auto presentFenceInfo = vk::SwapchainPresentFenceInfoEXT{}.setFences(*frameSynchronization.present);
@@ -711,8 +833,6 @@ void RenderThreadFunc(std::stop_token stop_token, GLFWwindow* const Window)
 }
 
 int main() {
-	//_CrtSetDbgFlag(_CRTDBG_ALLOC_MEM_DF | _CRTDBG_LEAK_CHECK_DF);
-
 	glfwSetErrorCallback(GlfwErrorCallback);
 
 	if (glfwInit() != GLFW_TRUE)
@@ -744,3 +864,5 @@ int main() {
 
 	return EXIT_SUCCESS;
 }
+
+// TODO: add IWYU
