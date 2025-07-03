@@ -433,7 +433,7 @@ void RenderThreadFunc(std::stop_token stop_token, GLFWwindow* const Window)
 	const auto pipelineLayout = [&] {
 		const auto createInfo = vk::PipelineLayoutCreateInfo{};
 		return Device.createPipelineLayout(createInfo);
-	};
+	}();
 
 	const auto createShaderModule = [&](const std::filesystem::path& path) {
 		const auto loadSPIRV = [](const std::filesystem::path& path) {
@@ -467,8 +467,7 @@ void RenderThreadFunc(std::stop_token stop_token, GLFWwindow* const Window)
 	};
 
 	// TODO: add support for VK_EXT_shader_object
-	const auto fragShaderModule = createShaderModule("shaders/triangle.frag");
-	const auto vertShaderModule = createShaderModule("shaders/triangle.vert");
+	const auto combindedShaderModule = createShaderModule("shaders/combined");
 
 	const auto graphicaPipeline = [&] {
 		// Vertex input state
@@ -498,6 +497,7 @@ void RenderThreadFunc(std::stop_token stop_token, GLFWwindow* const Window)
 			.polygonMode = vk::PolygonMode::eFill,
 			.cullMode = vk::CullModeFlagBits::eBack,
 			.frontFace = vk::FrontFace::eClockwise,
+			.lineWidth = 1.0f,
 		};
 
 		// Multisample state
@@ -525,12 +525,12 @@ void RenderThreadFunc(std::stop_token stop_token, GLFWwindow* const Window)
 		const auto stages = {
 			vk::PipelineShaderStageCreateInfo{
 				.stage = vk::ShaderStageFlagBits::eFragment,
-				.module = fragShaderModule,
+				.module = combindedShaderModule,
 				.pName = "main",
 			},
 			vk::PipelineShaderStageCreateInfo{
 				.stage = vk::ShaderStageFlagBits::eVertex,
-				.module = vertShaderModule,
+				.module = combindedShaderModule,
 				.pName = "main",
 			},
 		};
@@ -547,10 +547,11 @@ void RenderThreadFunc(std::stop_token stop_token, GLFWwindow* const Window)
 			.pMultisampleState = &multisampleState,
 			.pColorBlendState = &colorBlendState,
 			//.pDynamicState = &dynamicState,
+			.layout = *pipelineLayout,
 		}.setStages(stages);
 
 		return Device.createGraphicsPipeline(nullptr, createInfo);
-		}();
+	}();
 
 	const auto frameSynchronizations = [&]
 	{
@@ -749,7 +750,7 @@ void RenderThreadFunc(std::stop_token stop_token, GLFWwindow* const Window)
 			const auto signalSemaphoreInfo = {
 				vk::SemaphoreSubmitInfo{
 					.semaphore = *frameSynchronization.timeline,
-					.value = ePrePresent,
+					.value = FrameTimeline::eMax * frameNumber + FrameTimeline::ePrePresent,
 					.stageMask = vk::PipelineStageFlagBits2::eAllCommands,
 				},
 				vk::SemaphoreSubmitInfo{
