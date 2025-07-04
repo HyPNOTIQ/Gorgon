@@ -1,18 +1,13 @@
 ﻿#include "pch.h"
+#include "gltf_loader.h"
 
 VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 
+constexpr auto APP_NAME = "Gorgon";
 constexpr auto WIDTH = 800u;
 constexpr auto HEIGHT = 600u;
 constexpr auto MAX_PENDING_FRAMES = 2u;
 constexpr auto UINT64_MAX_VALUE = std::numeric_limits<uint64_t>::max();
-
-void GlfwErrorCallback(
-	const int ErrorCode,
-	const char* const Description)
-{
-	fmt::println(std::cerr, "GLFW Error {}: {}", ErrorCode, Description);
-}
 
 #define VKCONFIG
 
@@ -27,10 +22,9 @@ namespace vk
 	concept AllChainable = (Chainable<Ts> && ...);
 
 	template <AllChainable... ChainElements>
-	auto createStructureChain(ChainElements const... elems)
+	auto createStructureChain(ChainElements&&... elems)
 	{
-		return vk::StructureChain<ChainElements...>(elems...);
-		//return vk::StructureChain<ChainElements...>(std::forward<ChainElements>(elems)...); // TODO: check && universal ref
+		return vk::StructureChain<std::remove_cvref_t<ChainElements>...>(std::forward<ChainElements>(elems)...);
 	}
 
 	const auto deviceExtensions = {
@@ -53,6 +47,12 @@ namespace vk
 	}
 #endif // !VKCONFIG
 }
+
+// TODO
+class RenderThreadConfig
+{
+	std::string_view gltfFile;
+};
 
 std::vector<const char*> GetRequiredExtensions() {
 	uint32_t GlfwExtensionCount;
@@ -82,7 +82,7 @@ static inline void SetDebugUtilsObjectName(
 #endif // !NDEBUG
 }
 
-void RenderThreadFunc(std::stop_token stop_token, GLFWwindow* const Window)
+void RenderThreadFunc(const std::stop_token stop_token, GLFWwindow* const Window)
 {
 	VULKAN_HPP_DEFAULT_DISPATCHER.init();
 
@@ -117,6 +117,8 @@ void RenderThreadFunc(std::stop_token stop_token, GLFWwindow* const Window)
 	const auto DebugUtilsMessenger = vk::raii::DebugUtilsMessengerEXT(Instance, DebugUtilsMessengerCreateInfo);
 #endif // !VKCONFIG
 
+	VULKAN_HPP_DEFAULT_DISPATCHER.init(*Instance);
+
 	const auto Surface = [&] {
 		VkSurfaceKHR surface;
 
@@ -126,7 +128,6 @@ void RenderThreadFunc(std::stop_token stop_token, GLFWwindow* const Window)
 		return vk::raii::SurfaceKHR(Instance, surface);
 	}();
 
-	VULKAN_HPP_DEFAULT_DISPATCHER.init(*Instance);
 	const auto PhysicalDevices = Instance.enumeratePhysicalDevices();
 	const auto& PhysicalDevice = PhysicalDevices[0];
 
@@ -135,12 +136,9 @@ void RenderThreadFunc(std::stop_token stop_token, GLFWwindow* const Window)
 
 		struct QueueFamilyIndices
 		{
-			QueueFamilyIndices(const uint32_t graphicsVal, const uint32_t presentVal)
-				: Graphics(graphicsVal), Present(presentVal), same(graphicsVal == presentVal) {}
-
 			uint32_t Graphics;
 			uint32_t Present;
-			bool same;
+			uint32_t Transfer;
 		};
 
 		const auto supportsGraphics = [&](const vk::QueueFamilyProperties2& properties) {
@@ -153,12 +151,13 @@ void RenderThreadFunc(std::stop_token stop_token, GLFWwindow* const Window)
 
 		const auto findSeparate = [&] -> std::optional<QueueFamilyIndices> {
 			const auto graphicsQueues = [&] {
+				// TODO
 				const auto filter = [&](const std::pair<size_t, vk::QueueFamilyProperties2>& pair) {
 					return supportsGraphics(pair.second);
 				};
 
 				const auto transform = [](const std::pair<size_t, vk::QueueFamilyProperties2>& pair) {
-					return uint32_t(pair.first);
+					return static_cast<uint32_t>(pair.first);
 				};
 
 				return QueueFamilyProperties
@@ -178,7 +177,13 @@ void RenderThreadFunc(std::stop_token stop_token, GLFWwindow* const Window)
 				for (const uint32_t presentQueueIndex : presentQueues) {
 					if (graphicsQueueIndex != presentQueueIndex) {
 
-						return std::make_optional(QueueFamilyIndices(graphicsQueueIndex, presentQueueIndex));
+						return std::make_optional(
+							QueueFamilyIndices{
+								.Graphics = graphicsQueueIndex,
+								.Present = presentQueueIndex,
+								.Transfer = graphicsQueueIndex // TODO: find transfer queue
+							}
+						);
 					}
 				}
 			}
@@ -188,10 +193,14 @@ void RenderThreadFunc(std::stop_token stop_token, GLFWwindow* const Window)
 
 		const auto find = [&] -> std::optional<QueueFamilyIndices> {
 			for (const auto& [index, value] : std::views::enumerate(QueueFamilyProperties)) {
-				const auto queueFamilyIndex = uint32_t(index);
+				const auto queueFamilyIndex = static_cast<uint32_t>(index);
 
 				if (supportsGraphics(value) && supportsPresent(queueFamilyIndex)) {
-					return std::make_optional(QueueFamilyIndices(queueFamilyIndex, queueFamilyIndex));
+					return std::make_optional(QueueFamilyIndices{
+						queueFamilyIndex,
+						queueFamilyIndex,
+						queueFamilyIndex
+					});
 				}
 			}
 
@@ -206,63 +215,52 @@ void RenderThreadFunc(std::stop_token stop_token, GLFWwindow* const Window)
 		return forceSeparate ? findSeparate().value_or(find().value()) : find().value();
 	}();
 
-	const auto queuePriority = 1.0f;
-	const auto GraphicsQueueCreateInfo = vk::DeviceQueueCreateInfo{
-		.queueFamilyIndex = queueFamilyIndices.Graphics,
-		.queueCount = 1,
-		.pQueuePriorities = &queuePriority,
-	};
+	const auto Device = [&] {
+		constexpr auto queuePriority = 1.0f;
+		const auto transform = [&](const uint32_t index) {
+			return vk::DeviceQueueCreateInfo{
+				.queueFamilyIndex = index,
+				.queueCount = 1,
+				.pQueuePriorities = &queuePriority,
+			};
+		};
 
-	const auto PresentQueueCreateInfo = vk::DeviceQueueCreateInfo{
-		.queueFamilyIndex = queueFamilyIndices.Present,
-		.queueCount = 1,
-		.pQueuePriorities = &queuePriority,
-	};
+		// TODO: use std::inplace_vector C++26
+		std::vector<uint32_t> queueIndices = { queueFamilyIndices.Graphics, queueFamilyIndices.Present };
+		auto [first, last] = std::ranges::unique(queueIndices);
+		queueIndices.erase(first, last);
 
-	// TODO
-	std::vector<vk::DeviceQueueCreateInfo> queueCreateInfos = { GraphicsQueueCreateInfo, PresentQueueCreateInfo };
+		const auto queueCreateInfos = queueIndices
+			| std::views::transform(transform)
+			| std::ranges::to<vku::small::vector<vk::DeviceQueueCreateInfo, MAX_PENDING_FRAMES>>();
 
-	// Step 1: Sort the vector
-	std::ranges::sort(queueCreateInfos);
-
-	// Step 2: Use std::ranges::unique to move duplicates to the end
-	auto [first, last] = std::ranges::unique(queueCreateInfos);
-
-	// Step 3: Erase the duplicates
-	queueCreateInfos.erase(first, last);
-
-	//const auto queueCreateInfos = { GraphicsQueueCreateInfo, PresentQueueCreateInfo };
-
-	const auto DeviceCreateInfoChain = createStructureChain(
-		vk::DeviceCreateInfo{}
+		const auto DeviceCreateInfoChain = createStructureChain(
+			vk::DeviceCreateInfo{}
 			.setQueueCreateInfos(queueCreateInfos)
 			.setPEnabledExtensionNames(vk::deviceExtensions),
-		vk::PhysicalDeviceFeatures2{
-			.features = {
-				//.geometryShader = true,
+			vk::PhysicalDeviceVulkan12Features{
+				.timelineSemaphore = true,
+			},
+			vk::PhysicalDeviceVulkan13Features{
+				.synchronization2 = true,
+				.dynamicRendering = true,
+			},
+			// check how to replace with core vulkan
+			vk::PhysicalDeviceSwapchainMaintenance1FeaturesEXT{
+				.swapchainMaintenance1 = true,
 			}
-		},
-		vk::PhysicalDeviceVulkan12Features{
-			.timelineSemaphore = true,
-		},
-		vk::PhysicalDeviceVulkan13Features{
-			.synchronization2 = true,
-			.dynamicRendering = true,
-		},
-		// check how to replace with core vulkan
-		vk::PhysicalDeviceSwapchainMaintenance1FeaturesEXT{
-			.swapchainMaintenance1 = true,
-		}
-	);
+		);
 
-	const auto Device = PhysicalDevice.createDevice(DeviceCreateInfoChain.get<vk::DeviceCreateInfo>());
+		return PhysicalDevice.createDevice(DeviceCreateInfoChain.get<vk::DeviceCreateInfo>());
+	}();
+
 	VULKAN_HPP_DEFAULT_DISPATCHER.init(*Device);
 
 	const auto GraphicsQueue = Device.getQueue(queueFamilyIndices.Graphics, 0);
 	const auto PresentQueue = Device.getQueue(queueFamilyIndices.Present, 0);
 
 	// TODO: create question on Vulkan-hpp github about vk::ObjectType
-	if (not queueFamilyIndices.same) {
+	if (queueFamilyIndices.Graphics != queueFamilyIndices.Present) {
 		SetDebugUtilsObjectName(
 			Device,
 			vk::ObjectType::eQueue,
@@ -313,8 +311,8 @@ void RenderThreadFunc(std::stop_token stop_token, GLFWwindow* const Window)
 			glfwGetFramebufferSize(Window, &width, &height);
 
 			const auto actualExtent = vk::Extent2D{
-				.width = uint32_t(width),
-				.height = uint32_t(height),
+				.width = static_cast<uint32_t>(width),
+				.height = static_cast<uint32_t>(height),
 			};
 
 			const auto& MinImageExtent = SurfaceCapabilities.minImageExtent;
@@ -455,8 +453,13 @@ void RenderThreadFunc(std::stop_token stop_token, GLFWwindow* const Window)
 				assert(false);
 			}
 
+			constexpr auto SPIRV_MAGIC = static_cast<uint32_t>(0x07230203);
+			if (buffer.empty() || buffer[0] != SPIRV_MAGIC) {
+				assert(false && "Invalid SPIR-V magic number.");
+			}
+
 			return buffer;
-			};
+		};
 
 		const auto code = loadSPIRV(path);
 
@@ -614,11 +617,14 @@ void RenderThreadFunc(std::stop_token stop_token, GLFWwindow* const Window)
 		//fmt::println(std::clog, "Render Thread");
 		const auto frameIndex = frameNumber % MAX_PENDING_FRAMES;
 
-		// TODO: create somesort of class with update(frameNumber) to simplify usage
 		enum FrameTimeline : uint64_t {
 			eRender = 1,
 			ePrePresent,
 			eMax = ePrePresent
+		};
+
+		const auto getTimelineValue = [&](const FrameTimeline timelineValue) {
+			return FrameTimeline::eMax * frameNumber + timelineValue;
 		};
 
 		const auto& frameSynchronization = frameSynchronizations[frameIndex];
@@ -648,7 +654,6 @@ void RenderThreadFunc(std::stop_token stop_token, GLFWwindow* const Window)
 		{
 			const auto& commandBuffer = renderCommandBuffers[frameIndex];
 			commandBuffer.reset();
-			
 
 			// record command buffer
 			{
@@ -741,7 +746,7 @@ void RenderThreadFunc(std::stop_token stop_token, GLFWwindow* const Window)
 
 			const auto waitSemaphoresInfo = vk::SemaphoreSubmitInfo{
 				.semaphore = *frameSynchronization.timeline,
-				.value = FrameTimeline::eMax * frameNumber + FrameTimeline::eRender,
+				.value = getTimelineValue(FrameTimeline::eRender),
 				.stageMask = vk::PipelineStageFlagBits2::eAllCommands,
 			};
 
@@ -750,7 +755,7 @@ void RenderThreadFunc(std::stop_token stop_token, GLFWwindow* const Window)
 			const auto signalSemaphoreInfo = {
 				vk::SemaphoreSubmitInfo{
 					.semaphore = *frameSynchronization.timeline,
-					.value = FrameTimeline::eMax * frameNumber + FrameTimeline::ePrePresent,
+					.value = getTimelineValue(FrameTimeline::ePrePresent),
 					.stageMask = vk::PipelineStageFlagBits2::eAllCommands,
 				},
 				vk::SemaphoreSubmitInfo{
@@ -759,8 +764,8 @@ void RenderThreadFunc(std::stop_token stop_token, GLFWwindow* const Window)
 				},
 			};
 
-			const uint64_t waitSemaphoreValues = FrameTimeline::eMax * frameNumber + FrameTimeline::eRender;
-			const uint64_t signalSemaphoreValues = FrameTimeline::eMax * frameNumber + FrameTimeline::ePrePresent;
+			const uint64_t waitSemaphoreValues = getTimelineValue(FrameTimeline::eRender);
+			const uint64_t signalSemaphoreValues = getTimelineValue(FrameTimeline::ePrePresent);
 
 			const auto submitInfo = vk::SubmitInfo2{}
 				.setWaitSemaphoreInfos(waitSemaphoresInfo)
@@ -787,7 +792,6 @@ void RenderThreadFunc(std::stop_token stop_token, GLFWwindow* const Window)
 			PresentQueue.submit2(submitInfo);
 		}
 
-		// TODO: not needed for non separate queues
 		// present
 		{
 			const auto presentFenceInfo = vk::SwapchainPresentFenceInfoEXT{}.setFences(*frameSynchronization.present);
@@ -800,7 +804,6 @@ void RenderThreadFunc(std::stop_token stop_token, GLFWwindow* const Window)
 				vk::SwapchainPresentFenceInfoEXT{}.setFences(*frameSynchronization.present)
 			);
 
-			// TODO: check VK_KHR_present_id
 			// TODO: swapchain recreation
 			PresentQueue.presentKHR(presentInfoChain.get<vk::PresentInfoKHR>());
 		}
@@ -820,7 +823,20 @@ void RenderThreadFunc(std::stop_token stop_token, GLFWwindow* const Window)
 	Device.waitIdle();
 }
 
-int main() {
+int main(int argc, char* argv[])
+{
+	// Initialize the command line parser
+	auto app = CLI::App();
+	auto gltfFile = std::string();
+	app.add_option("gltfFile", gltfFile, "Input glTF file")->required();
+
+	CLI11_PARSE(app, argc, argv);
+
+	// Initialize GLFW
+	const auto GlfwErrorCallback = [](const int ErrorCode, const char* const Description) {
+		fmt::println(std::cerr, "GLFW Error {}: {}", ErrorCode, Description);
+	};
+
 	glfwSetErrorCallback(GlfwErrorCallback);
 
 	if (glfwInit() != GLFW_TRUE)
@@ -833,7 +849,7 @@ int main() {
 
 	glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
 	glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
-	GLFWwindow* const Window = glfwCreateWindow(WIDTH, HEIGHT, "Gorgon", nullptr, nullptr);
+	GLFWwindow* const Window = glfwCreateWindow(WIDTH, HEIGHT, APP_NAME, nullptr, nullptr);
 	if (not Window) {
 		fmt::println(std::cerr, "Failed to create GLFW window");
 		return EXIT_FAILURE;
@@ -854,3 +870,10 @@ int main() {
 }
 
 // TODO: add IWYU
+// TODO: check VK_KHR_present_id
+// TODO: check VK_KHR_present_wait
+// TODO: add clang-format
+// TODO: add clang-tidy
+// TODO: swapchain recreation
+// TODO: hot-reload shaders
+// TODO: remove cgltf

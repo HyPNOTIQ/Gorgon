@@ -13,3 +13,12 @@
 [submodule "third_party/CLI11"]
 	path = third_party/CLI11
 	url = https://github.com/CLIUtils/CLI11.git
+[submodule "third_party/glm"]
+	path = third_party/glm
+	url = https://github.com/g-truc/glm.git
+[submodule "third_party/Vulkan-Hpp"]
+	path = third_party/Vulkan-Hpp
+	url = https://github.com/KhronosGroup/Vulkan-Hpp.git
+[submodule "third_party/tinygltf"]
+	path = third_party/tinygltf
+	url = https://github.com/syoyo/tinygltf.git

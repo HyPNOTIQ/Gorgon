@@ -13,6 +13,10 @@ project ("Gorgon")
 
 # Include sub-projects.
 add_subdirectory ("Gorgon")
+add_subdirectory ("third_party/Vulkan-Hpp")
 add_subdirectory ("third_party/glfw")
 add_subdirectory ("third_party/fmt")
 add_subdirectory ("third_party/GSL")
+add_subdirectory ("third_party/CLI11")
+add_subdirectory ("third_party/glm")
+add_subdirectory ("third_party/tinygltf")
