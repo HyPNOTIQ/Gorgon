@@ -7,9 +7,6 @@
 [submodule "third_party/GSL"]
 	path = third_party/GSL
 	url = https://github.com/microsoft/GSL.git
-[submodule "third_party/cgltf"]
-	path = third_party/cgltf
-	url = https://github.com/jkuhlmann/cgltf.git
 [submodule "third_party/CLI11"]
 	path = third_party/CLI11
 	url = https://github.com/CLIUtils/CLI11.git
