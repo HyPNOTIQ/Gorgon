@@ -1,5 +1,7 @@
 #pragma once
 
+//#include <vulkan/vulkan.h>
+
 #include <fmt/ostream.h>
 #include <iostream>
 #include <thread>
@@ -8,12 +10,14 @@
 #include <ranges>
 #include <gsl/gsl>
 #include <CLI/CLI.hpp>
-
-// TODO: enable using CMake options
-#define VULKAN_HPP_NO_CONSTRUCTORS
-#define VULKAN_HPP_DISPATCH_LOADER_DYNAMIC 1
+#include <tiny_gltf.h>
+#include <vk_mem_alloc.h>
 #include <vulkan/vulkan_raii.hpp>
 #include <vulkan/utility/vk_small_containers.hpp>
+#include <glm/glm.hpp>
+#include <glm/gtc/type_ptr.hpp>
 
 //#define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
+
+constexpr auto UINT64_MAX_VALUE = std::numeric_limits<uint64_t>::max();

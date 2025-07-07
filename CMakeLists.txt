@@ -13,10 +13,21 @@ project ("Gorgon")
 
 # Include sub-projects.
 add_subdirectory ("Gorgon")
+
+set(VULKAN_HPP_HANDLES_MOVE_EXCHANGE ON)
+set(VULKAN_HPP_BUILD_WITH_LOCAL_VULKAN_HPP OFF)
+set(VK_NO_PROTOTYPES ON)
+set(VULKAN_HPP_NO_CONSTRUCTORS ON)
 add_subdirectory ("third_party/Vulkan-Hpp")
 add_subdirectory ("third_party/glfw")
 add_subdirectory ("third_party/fmt")
 add_subdirectory ("third_party/GSL")
+add_subdirectory ("third_party/VulkanMemoryAllocator")
+
+set(CLI11_PRECOMPILED ON)
 add_subdirectory ("third_party/CLI11")
 add_subdirectory ("third_party/glm")
+
+set(TINYGLTF_BUILD_LOADER_EXAMPLE OFF)
+set(TINYGLTF_INSTALL OFF)
 add_subdirectory ("third_party/tinygltf")
