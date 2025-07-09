@@ -45,27 +45,44 @@ constexpr auto maxAccessors = 11u;
 class GltfPrimitive
 {
 public:
-	void Draw(const vk::raii::CommandBuffer& commandBuffer) const;
+	struct DrawInfo
+	{
+		const vk::raii::CommandBuffer& commandBuffer;
+	};
+
+	void Draw(const DrawInfo& drawInfo) const;
 
 	vku::small::vector<vk::VertexInputBindingDescription2EXT, maxAccessors> vertexBindingDescriptions;
 	vku::small::vector<vk::VertexInputAttributeDescription2EXT, maxAccessors> vertexAttributeDescriptions;
 	// TODO: ref?
 	std::optional<const GltfAccessors> positionAccessor = std::nullopt;
 	std::optional<const GltfAccessors> indicesAccessor = std::nullopt;
-
+	vk::PrimitiveTopology topology;
 };
 
 class GltfMesh
 {
 public:
-	void Draw(const vk::raii::CommandBuffer& commandBuffer) const;
+	struct DrawInfo
+	{
+		const vk::raii::CommandBuffer& commandBuffer;
+	};
+
+	void Draw(const DrawInfo& drawInfo) const;
 	std::vector<GltfPrimitive> Primitives;
 };
 
 class GltfNode
 {
 public:
-	void Draw(const vk::raii::CommandBuffer& commandBuffer) const;
+	struct DrawInfo
+	{
+		const glm::mat4& viewProj;
+		const vk::raii::CommandBuffer& commandBuffer;
+		const vk::raii::PipelineLayout& pipelineLayout;
+	};
+
+	void Draw(const DrawInfo& drawInfo) const;
 	glm::mat4 Transform = glm::identity<glm::mat4>();
 	std::optional<GltfMesh> Mesh;
 	std::vector<GltfNode> Children;
@@ -74,13 +91,28 @@ public:
 class GltfScene
 {
 public:
-	void Draw(const vk::raii::CommandBuffer& commandBuffer) const;
+	struct DrawInfo
+	{
+		const glm::mat4& viewProj;
+		const vk::raii::CommandBuffer& commandBuffer;
+		const vk::raii::PipelineLayout& pipelineLayout;
+	};
+
+	void Draw(const DrawInfo& drawInfo) const;
 	std::vector<GltfNode> Nodes;
 };
 
 class GltfModel
 {
 public:
+	struct DrawInfo
+	{
+		size_t sceneIndex;
+		const glm::mat4& viewProj;
+		const vk::raii::CommandBuffer& commandBuffer;
+		const vk::raii::PipelineLayout& pipelineLayout;
+	};
+
 	struct CreateInfo {
 		const std::string_view& gltfFile;
 		const VulkanMemoryAllocator& memoryAllocator;
@@ -91,7 +123,7 @@ public:
 
 	GltfModel(const CreateInfo& createInfo);
 
-	void Draw(const size_t sceneIndex, const vk::raii::CommandBuffer& commandBuffer) const;
+	void Draw(const DrawInfo& drawInfo) const;
 
 private:
 	//tinygltf::Model model;

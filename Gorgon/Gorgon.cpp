@@ -1,6 +1,5 @@
 ﻿#include "gltf_loader.h"
 #include "vma_raii.h"
-#include "shaders/pushconstants.inl"
 
 VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 
@@ -583,7 +582,7 @@ void RenderThreadFunc(
 		// Rasterization State
 		const auto rasterizationState = vk::PipelineRasterizationStateCreateInfo{
 			.polygonMode = vk::PolygonMode::eLine,
-			.cullMode = vk::CullModeFlagBits::eNone, // TODO
+			.cullMode = vk::CullModeFlagBits::eNone, // TODO: https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#instantiation
 			.frontFace = vk::FrontFace::eClockwise,
 			.lineWidth = 1.0f,
 		};
@@ -604,7 +603,7 @@ void RenderThreadFunc(
 
 		// Dynamic state
 		const auto dynamicStates = {
-			//vk::DynamicState::ePrimitiveTopology,
+			vk::DynamicState::ePrimitiveTopology,
 			vk::DynamicState::eVertexInputBindingStride,
 		};
 
@@ -880,24 +879,15 @@ void RenderThreadFunc(
 				};
 
 				const auto viewProj = createViewProj();
-				//const auto pushConstantRange = vk::PushConstantRange{
-				//	.stageFlags = vk::ShaderStageFlagBits::eVertex,
-				//	.offset = 0,
-				//	.size = sizeof(glm::mat4),
-				//};
 
-				const auto pushConstantsInfo = vk::PushConstantsInfo{
-					.layout = *pipelineLayout,
-					.stageFlags = vk::ShaderStageFlagBits::eVertex,
-					.offset = 0,
-					.size = sizeof(viewProj),
-					.pValues = &viewProj,
+				const auto gltfModelDrawInfo = GltfModel::DrawInfo{
+					.sceneIndex = 0,
+					.viewProj = viewProj,
+					.commandBuffer = commandBuffer,
+					.pipelineLayout = pipelineLayout,
 				};
 
-				commandBuffer.pushConstants2(pushConstantsInfo);
-
-				gltfModel.Draw(0, commandBuffer); //TODO: handle scene index
-				//commandBuffer.draw(3, 1, 0, 0);
+				gltfModel.Draw(gltfModelDrawInfo);
 
 				commandBuffer.endRendering();
 

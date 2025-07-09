@@ -23,7 +23,7 @@ VSOutput main(const VSInput input, const uint vertexIndex: SV_VertexID) {
 	VSOutput output;
 
 	let position = float4(input.inPosition, 1.0);
-	output.position = mul(pushConstants.viewProjection, position);
+	output.position = mul(pushConstants.mvp, position);
     // output.position = position;
     output.fragColor = input.inPosition;
 	return output;

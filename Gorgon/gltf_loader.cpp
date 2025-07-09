@@ -1,4 +1,5 @@
 #include "gltf_loader.h"
+#include "shaders/pushconstants.inl"
 
 namespace
 {
@@ -59,8 +60,9 @@ void GltfAccessors::BindAsVertex(const vk::raii::CommandBuffer& commandBuffer) c
 	//buffer.BindAsIndex(commandBuffer);
 }
 
-void GltfPrimitive::Draw(const vk::raii::CommandBuffer& commandBuffer) const
+void GltfPrimitive::Draw(const DrawInfo& drawInfo) const
 {
+	const auto& commandBuffer = drawInfo.commandBuffer;
 	if (not positionAccessor)
 	{
 		return; // no position data to draw
@@ -70,15 +72,16 @@ void GltfPrimitive::Draw(const vk::raii::CommandBuffer& commandBuffer) const
 
 	//commandBuffer.setVertexInputEXT(vertexBindingDescriptions, vertexAttributeDescriptions);
 
+	commandBuffer.setPrimitiveTopology(topology);
 	const auto& positionAccessor = this->positionAccessor.value();
 	//positionAccessor.BindAsVertex(commandBuffer);
 
 	commandBuffer.bindVertexBuffers2(
 		0, // first binding
 		{ *positionAccessor.bufferView.buffer.buffer }, // buffers
-		{ positionAccessor.bufferView.byteOffset + positionAccessor.bufferView.buffer.buffer.Offset() }, // offsets
-		{ positionAccessor.bufferView.byteLength },
-		{ positionAccessor.bufferView.byteStride + sizeof(glm::vec3)} // strides
+		{ positionAccessor.byteOffset + positionAccessor.bufferView.buffer.buffer.Offset() }, // offsets
+		{ positionAccessor.bufferView.byteLength - positionAccessor.byteOffset },
+		{ positionAccessor.bufferView.byteStride} // strides
 	);
 
 	//commandBuffer.bindVertexBuffers(
@@ -97,7 +100,7 @@ void GltfPrimitive::Draw(const vk::raii::CommandBuffer& commandBuffer) const
 
 		commandBuffer.bindIndexBuffer2(
 			*buffer.buffer,
-			buffer.buffer.Offset(),
+			buffer.buffer.Offset() + bufferView.byteOffset,
 			bufferView.byteLength,
 			vk::IndexType::eUint16 // TODO: handle index type
 		);
@@ -228,6 +231,25 @@ GltfModel::GltfModel(const CreateInfo& createInfo)
 	const auto createPrimitive = [&](const tinygltf::Primitive& primitive) {
 		GltfPrimitive result;
 
+		const auto getPrimitiveMode = [](const tinygltf::Primitive& primitive) {
+			vk::PrimitiveTopology result;
+
+			switch (primitive.mode) {
+				case -1:
+				case TINYGLTF_MODE_TRIANGLES: result = vk::PrimitiveTopology::eTriangleList; break;
+				case TINYGLTF_MODE_POINTS: result = vk::PrimitiveTopology::ePointList; break;
+				case TINYGLTF_MODE_LINE: result = vk::PrimitiveTopology::eLineList; break;
+				case TINYGLTF_MODE_LINE_LOOP: assert(false); break; // TODO: there is no line loop in Vulkan, implement as line strip?
+				case TINYGLTF_MODE_TRIANGLE_STRIP: result = vk::PrimitiveTopology::eTriangleStrip; break;
+				case TINYGLTF_MODE_TRIANGLE_FAN: result = vk::PrimitiveTopology::eTriangleFan; break;
+				default: assert(false); // unsupported primitive mode
+			}
+
+			return result;
+		};
+
+		result.topology = getPrimitiveMode(primitive);
+
 		if(const auto it = primitive.attributes.find("POSITION"); it != primitive.attributes.end())
 		{
 			const auto& positionAccessor = Accessors[it->second];
@@ -310,32 +332,70 @@ GltfModel::GltfModel(const CreateInfo& createInfo)
 		| std::ranges::to<std::vector<GltfScene>>();
 }
 
-void GltfModel::Draw(const size_t sceneIndex, const vk::raii::CommandBuffer& commandBuffer) const
+void GltfModel::Draw(const DrawInfo& drawInfo) const
 {
+	const auto sceneIndex = drawInfo.sceneIndex;
+	//const auto& commandBuffer = drawInfo.commandBuffer;
+
 	if (sceneIndex >= Scenes.size())
 	{
 		return; // invalid scene index
 	}
 	const auto& scene = Scenes[sceneIndex];
-	scene.Draw(commandBuffer);
+
+	const auto sceneDrawInfo = GltfScene::DrawInfo{
+		.viewProj = drawInfo.viewProj,
+		.commandBuffer = drawInfo.commandBuffer,
+		.pipelineLayout = drawInfo.pipelineLayout,
+	};
+
+	scene.Draw(sceneDrawInfo);
 }
 
-void GltfScene::Draw(const vk::raii::CommandBuffer& commandBuffer) const
+void GltfScene::Draw(const GltfScene::DrawInfo& drawInfo) const
 {
-	std::ranges::for_each(Nodes, [&](const GltfNode& node) { node.Draw(commandBuffer); });
+	const auto nodeDrawInfo = GltfNode::DrawInfo{
+		.viewProj = drawInfo.viewProj,
+		.commandBuffer = drawInfo.commandBuffer,
+		.pipelineLayout = drawInfo.pipelineLayout,
+	};
+
+	std::ranges::for_each(Nodes, [&](const GltfNode& node) { node.Draw(nodeDrawInfo); });
 }
 
-void GltfNode::Draw(const vk::raii::CommandBuffer& commandBuffer) const
+void GltfNode::Draw(const GltfNode::DrawInfo& drawInfo) const
 {
+	const auto pushConstants = PushConstants{
+		.mvp = drawInfo.viewProj * Transform,
+	};
+
+	const auto pushConstantsInfo = vk::PushConstantsInfo{
+		.layout = *drawInfo.pipelineLayout,
+		.stageFlags = vk::ShaderStageFlagBits::eVertex,
+		.offset = 0,
+		.size = sizeof(pushConstants),
+		.pValues = &pushConstants,
+	};
+
+	const auto& commandBuffer = drawInfo.commandBuffer;
+	commandBuffer.pushConstants2(pushConstantsInfo);
+
 	if (Mesh)
 	{
-		const auto& mesh = Mesh.value();
-		mesh.Draw(commandBuffer);
+		const auto meshDrawInfo = GltfMesh::DrawInfo{
+			.commandBuffer = drawInfo.commandBuffer,
+		};
+		Mesh.value().Draw(meshDrawInfo);
 	}
-	std::ranges::for_each(Children, [&](const GltfNode& child) { child.Draw(commandBuffer); });
+
+	std::ranges::for_each(Children, [&](const GltfNode& child) { child.Draw(drawInfo); });
 }
 
-void GltfMesh::Draw(const vk::raii::CommandBuffer& commandBuffer) const
+void GltfMesh::Draw(const GltfMesh::DrawInfo& drawInfo) const
 {
-	std::ranges::for_each(Primitives, [&](const GltfPrimitive& primitive) { primitive.Draw(commandBuffer); });
+	const auto primitiveDrawInfo = GltfPrimitive::DrawInfo{
+		.commandBuffer = drawInfo.commandBuffer
+	};
+
+	std::ranges::for_each(Primitives, [&](const GltfPrimitive& primitive) { primitive.Draw(primitiveDrawInfo); });
 }

@@ -2,7 +2,7 @@
 
 struct PushConstants
 {
-    float4x4 viewProjection; // 4x4 matrix
+    float4x4 mvp;
 };
 
 struct Flags {
