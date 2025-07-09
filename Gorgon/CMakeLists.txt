@@ -2,7 +2,7 @@
 # project specific logic here.
 #
 
-add_executable (Gorgon "Gorgon.cpp" "pch.h" "gltf_loader.h" "gltf_loader.cpp" "vma_raii.h" "vma_raii.cpp" )
+add_executable (Gorgon "Gorgon.cpp" "pch.h" "gltf_loader.h" "gltf_loader.cpp" "vma_raii.h" "vma_raii.cpp")
 target_precompile_headers(Gorgon PRIVATE "pch.h")
 
 target_compile_definitions(Gorgon PRIVATE
@@ -16,6 +16,18 @@ target_compile_definitions(Gorgon PRIVATE
 target_include_directories(Gorgon PRIVATE "$ENV{VULKAN_SDK}/Include")
 #target_include_directories(Gorgon PRIVATE "$<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/third_party/cgltf>") // TODO: check what is BUILD_INTERFACE
 
+if (DEFINED ENV{RENDERDOC_INCLUDE}) 
+	message(STATUS "Building Gorgon with RenderDoc integration. "
+		"RENDERDOC_INCLUDE environment variable is defined: $ENV{RENDERDOC_INCLUDE}")
+
+	target_include_directories(Gorgon PRIVATE $ENV{RENDERDOC_INCLUDE})
+	target_compile_definitions(Gorgon PRIVATE RENDERDOC_INCLUDE)
+else()
+	message(STATUS "Building Gorgon without RenderDoc integration. "
+		"To enable RenderDoc, please define the RENDERDOC_INCLUDE environment "
+		"variable pointing to your RenderDoc include directory.")
+endif()
+
 target_link_libraries(Gorgon PRIVATE
 	Vulkan::Hpp
 	fmt
@@ -25,7 +37,6 @@ target_link_libraries(Gorgon PRIVATE
 	glfw
 	tinygltf
 	VulkanMemoryAllocator
-	dylib
 )
 
 set_property(TARGET Gorgon PROPERTY CXX_STANDARD 23)

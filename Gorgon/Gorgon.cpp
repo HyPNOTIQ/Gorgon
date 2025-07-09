@@ -90,14 +90,16 @@ void RenderThreadFunc(
 	const std::stop_token& stop_token,
 	const RenderThreadConfig& config)
 {
-#if 0 // https://github.com/baldurk/renderdoc/issues/3625
+#if defined(RENDERDOC_INCLUDE) && !defined(NDEBUG) && 0
+	static_assert(VK_API_VERSION < VK_API_VERSION_1_4, "Renderdoc does not support 1.4"); // https://github.com/baldurk/renderdoc/issues/3625
 	RENDERDOC_API_1_1_2* rdoc_api;
 
-	if (const auto renderdocLib = LoadLibraryA("renderdoc.dll"))
-	{
-		const auto RENDERDOC_GetAPI = (pRENDERDOC_GetAPI)GetProcAddress(renderdocLib, "RENDERDOC_GetAPI");
-		RENDERDOC_GetAPI(eRENDERDOC_API_Version_1_1_2, (void**)&rdoc_api);
-	}
+	// TODO: use dynamic library loading
+	//if (const auto renderdocLib = LoadLibraryA("renderdoc.dll"))
+	//{
+	//	const auto RENDERDOC_GetAPI = (pRENDERDOC_GetAPI)GetProcAddress(renderdocLib, "RENDERDOC_GetAPI");
+	//	RENDERDOC_GetAPI(eRENDERDOC_API_Version_1_1_2, (void**)&rdoc_api);
+	//}
 
 	rdoc_api->SetCaptureFilePathTemplate("renderdoc_captures");
 #endif
