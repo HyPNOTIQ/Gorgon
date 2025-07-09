@@ -31,3 +31,5 @@ add_subdirectory ("third_party/glm")
 set(TINYGLTF_BUILD_LOADER_EXAMPLE OFF)
 set(TINYGLTF_INSTALL OFF)
 add_subdirectory ("third_party/tinygltf")
+
+add_subdirectory ("third_party/dylib")

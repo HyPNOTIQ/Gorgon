@@ -53,6 +53,14 @@ vmaBuffer VulkanMemoryAllocator::CreateBuffer(
 	return vmaBuffer(buffer, allocation, allocator);
 }
 
+vmaBuffer::~vmaBuffer()
+{
+	if (buffer)
+	{
+		vmaDestroyBuffer(allocator, buffer, allocation);
+	}
+}
+
 vk::Result vmaBuffer::MapMemory(void** ppData) const
 {
 	const auto result = vmaMapMemory(allocator, allocation, ppData);
@@ -77,6 +85,23 @@ vk::Result vmaBuffer::CopyMemoryToAllocation(
 void vmaBuffer::UnmapMemory() const
 {
 	vmaUnmapMemory(allocator, allocation);
+}
+
+vk::DeviceSize vmaBuffer::Offset() const
+{
+	VmaAllocationInfo pAllocationInfo;
+	vmaGetAllocationInfo(allocator, allocation, &pAllocationInfo);
+	return pAllocationInfo.offset;
+}
+
+void vmaBuffer::BindAsVertex(const vk::raii::CommandBuffer& commandBuffer) const
+{
+	//commandBuffer.bindVertexBuffers(0, buffer);
+}
+
+void vmaBuffer::BindAsIndex(const vk::raii::CommandBuffer& commandBuffer) const
+{
+	//commandBuffer.bindIndexBuffer(buffer, 0, vk::IndexType::eUint32);
 }
 
 #define VMA_IMPLEMENTATION

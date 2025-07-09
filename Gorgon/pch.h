@@ -20,4 +20,20 @@
 //#define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
+#ifndef NOMINMAX
+#define NOMINMAX
+#include <dylib.hpp>
+#endif // !NOMINMAX
+
+// TODO
+#include "C:\Program Files\RenderDoc\renderdoc_app.h"
+
 constexpr auto UINT64_MAX_VALUE = std::numeric_limits<uint64_t>::max();
+
+#ifdef near
+#undef near
+#endif // near
+
+#ifdef far
+#undef far
+#endif // far

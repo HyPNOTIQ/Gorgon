@@ -8,12 +8,7 @@ public:
 	vmaBuffer& operator=(const vmaBuffer&) = delete;
 	vmaBuffer& operator=(vmaBuffer&& rhs) noexcept = default;
 
-	~vmaBuffer() {
-		if (buffer)
-		{
-			vmaDestroyBuffer(allocator, buffer, allocation);
-		}
-	}
+	~vmaBuffer();
 
 	vk::Result MapMemory(void** ppData) const;
 	vk::Result CopyMemoryToAllocation(
@@ -22,11 +17,10 @@ public:
 
 	void UnmapMemory() const;
 
-	vk::DeviceSize Offset() const noexcept {
-		VmaAllocationInfo pAllocationInfo;
-		vmaGetAllocationInfo(allocator, allocation, &pAllocationInfo);
-		return pAllocationInfo.offset;
-	}
+	vk::DeviceSize Offset() const;
+
+	void BindAsVertex(const vk::raii::CommandBuffer& commandBuffer) const;
+	void BindAsIndex(const vk::raii::CommandBuffer& commandBuffer) const;
 
 	vk::Buffer operator*() const noexcept {
 		return buffer;

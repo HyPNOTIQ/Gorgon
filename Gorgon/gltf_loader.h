@@ -1,44 +1,80 @@
 #pragma once
 #include "vma_raii.h"
 
+class GltfBuffer
+{
+public:
+	void BindAsVertex(const vk::raii::CommandBuffer& commandBuffer) const;
+	void BindAsIndex(const vk::raii::CommandBuffer& commandBuffer) const;
+
+	vmaBuffer buffer;
+};
+
+class GltfBufferView
+{
+public:
+	void BindAsVertex(const vk::raii::CommandBuffer& commandBuffer) const;
+	void BindAsIndex(const vk::raii::CommandBuffer& commandBuffer) const;
+
+	//size_t ByteOffset() const { return byteOffset; }
+	//size_t ByteStride() const { return byteStride; }
+
+//private:
+	const GltfBuffer& buffer;
+	uint32_t byteOffset;
+	uint32_t byteStride;
+	uint32_t byteLength;
+};
+
+class GltfAccessors
+{
+public:
+	void BindAsVertex(const vk::raii::CommandBuffer& commandBuffer) const;
+	void BindAsIndex(const vk::raii::CommandBuffer& commandBuffer) const;
+
+	GltfBufferView bufferView;
+	uint32_t byteOffset;
+	uint32_t count;
+};
+
+// move to pch.h
+template<typename T>
+using OptionalRef = std::optional<std::reference_wrapper<T>>;
+constexpr auto maxAccessors = 11u;
+
 class GltfPrimitive
 {
 public:
-	GltfPrimitive(const tinygltf::Model& model);
 	void Draw(const vk::raii::CommandBuffer& commandBuffer) const;
+
+	vku::small::vector<vk::VertexInputBindingDescription2EXT, maxAccessors> vertexBindingDescriptions;
+	vku::small::vector<vk::VertexInputAttributeDescription2EXT, maxAccessors> vertexAttributeDescriptions;
+	// TODO: ref?
+	std::optional<const GltfAccessors> positionAccessor = std::nullopt;
+	std::optional<const GltfAccessors> indicesAccessor = std::nullopt;
+
 };
 
 class GltfMesh
 {
 public:
-	GltfMesh(const tinygltf::Model& model);
 	void Draw(const vk::raii::CommandBuffer& commandBuffer) const;
-private:
 	std::vector<GltfPrimitive> Primitives;
 };
 
 class GltfNode
 {
 public:
-	GltfNode(
-		const tinygltf::Model& model,
-		const tinygltf::Node& node,
-		const glm::mat4& parentTransform
-	);
-
 	void Draw(const vk::raii::CommandBuffer& commandBuffer) const;
-private:
+	glm::mat4 Transform = glm::identity<glm::mat4>();
+	std::optional<GltfMesh> Mesh;
 	std::vector<GltfNode> Children;
-	GltfMesh Mesh;
-	glm::mat4 Transform = glm::mat4(1.0f);
 };
 
 class GltfScene
 {
 public:
-	GltfScene(const tinygltf::Model& model, const tinygltf::Scene& scene);
 	void Draw(const vk::raii::CommandBuffer& commandBuffer) const;
-private:
 	std::vector<GltfNode> Nodes;
 };
 
@@ -58,7 +94,10 @@ public:
 	void Draw(const size_t sceneIndex, const vk::raii::CommandBuffer& commandBuffer) const;
 
 private:
-	tinygltf::Model model;
+	//tinygltf::Model model;
 	std::vector<GltfScene> Scenes;
-	std::vector<vmaBuffer> Buffers;
+	std::vector<GltfMesh> Meshes;
+	std::vector<GltfAccessors> Accessors;
+	std::vector<GltfBufferView> BufferViews;
+	std::vector<GltfBuffer> Buffers;
 };

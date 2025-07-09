@@ -1,14 +1,15 @@
 ﻿#include "gltf_loader.h"
 #include "vma_raii.h"
+#include "shaders/pushconstants.inl"
 
 VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 
 constexpr auto APP_NAME = "Gorgon";
-constexpr auto WIDTH = 800u;
-constexpr auto HEIGHT = 600u;
+constexpr auto WIDTH = 1440u;
+constexpr auto HEIGHT = 900u;
 constexpr auto MAX_PENDING_FRAMES = 2u;
 
-#define VKCONFIG
+#define VULKAN_CONFIGURATOR
 
 namespace vk
 {
@@ -21,16 +22,17 @@ namespace vk
 	concept AllChainable = (Chainable<Ts> && ...);
 
 	template <AllChainable... ChainElements>
-	auto createStructureChain(ChainElements&&... elems)
+	decltype(auto) createStructureChain(ChainElements&&... elems)
 	{
 		return vk::StructureChain<std::remove_cvref_t<ChainElements>...>(std::forward<ChainElements>(elems)...);
 	}
 
 	const auto deviceExtensions = {
 		vk::KHRSwapchainExtensionName,
+		//vk::EXTVertexInputDynamicStateExtensionName,
 	};
 
-#ifndef VKCONFIG
+#ifndef VULKAN_CONFIGURATOR
 	VKAPI_ATTR vk::Bool32 VKAPI_CALL DebugMessageFunc(
 		const vk::DebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
 		const vk::DebugUtilsMessageTypeFlagsEXT messageTypes,
@@ -44,7 +46,7 @@ namespace vk
 
 		return VK_FALSE;
 	}
-#endif // !VKCONFIG
+#endif // !VULKAN_CONFIGURATOR
 }
 
 // TODO
@@ -82,12 +84,24 @@ static inline void SetDebugUtilsObjectName(
 #endif // !NDEBUG
 }
 
-constexpr auto VK_API_VERSION = VK_API_VERSION_1_3; // for VK_KHR_dynamic_rendering
+constexpr auto VK_API_VERSION = VK_API_VERSION_1_4;
 
 void RenderThreadFunc(
 	const std::stop_token& stop_token,
 	const RenderThreadConfig& config)
 {
+#if 0 // https://github.com/baldurk/renderdoc/issues/3625
+	RENDERDOC_API_1_1_2* rdoc_api;
+
+	if (const auto renderdocLib = LoadLibraryA("renderdoc.dll"))
+	{
+		const auto RENDERDOC_GetAPI = (pRENDERDOC_GetAPI)GetProcAddress(renderdocLib, "RENDERDOC_GetAPI");
+		RENDERDOC_GetAPI(eRENDERDOC_API_Version_1_1_2, (void**)&rdoc_api);
+	}
+
+	rdoc_api->SetCaptureFilePathTemplate("renderdoc_captures");
+#endif
+
 	const auto& Window = config.Window;
 	VULKAN_HPP_DEFAULT_DISPATCHER.init();
 
@@ -95,13 +109,13 @@ void RenderThreadFunc(
 
 	const auto RequiredExtensions = GetRequiredExtensions();
 
-#ifndef VKCONFIG
+#ifndef VULKAN_CONFIGURATOR
 	const auto DebugUtilsMessengerCreateInfo = vk::DebugUtilsMessengerCreateInfoEXT{
 		.messageSeverity = ~vk::DebugUtilsMessageSeverityFlagsEXT(),
 		.messageType = ~vk::DebugUtilsMessageTypeFlagsEXT() ^ vk::DebugUtilsMessageTypeFlagBitsEXT::eDeviceAddressBinding,
 		.pfnUserCallback = vk::DebugMessageFunc,
 	};
-#endif // !VKCONFIG
+#endif // !VULKAN_CONFIGURATOR
 
 	const auto Instance = [&]
 	{
@@ -110,9 +124,9 @@ void RenderThreadFunc(
 		};
 
 		const auto CreateInfo = vk::InstanceCreateInfo{
-#ifndef VKCONFIG
+#ifndef VULKAN_CONFIGURATOR
 			.pNext = &DebugUtilsMessengerCreateInfo,
-#endif // !VKCONFIG
+#endif // !VULKAN_CONFIGURATOR
 			.pApplicationInfo = &ApplicationInfo,
 		}.setPEnabledExtensionNames(RequiredExtensions);
 
@@ -120,9 +134,9 @@ void RenderThreadFunc(
 	}();
 	VULKAN_HPP_DEFAULT_DISPATCHER.init(*Instance);
 
-#ifndef VKCONFIG
+#ifndef VULKAN_CONFIGURATOR
 	const auto _DebugUtilsMessenger = Instance.createDebugUtilsMessengerEXT(DebugUtilsMessengerCreateInfo);
-#endif // !VKCONFIG
+#endif // !VULKAN_CONFIGURATOR
 
 	auto Surface = [&] {
 		VkSurfaceKHR surface;
@@ -248,10 +262,16 @@ void RenderThreadFunc(
 			| std::views::transform(transform)
 			| std::ranges::to<vku::small::vector<vk::DeviceQueueCreateInfo, MAX_PENDING_FRAMES>>();
 
+		const auto features = vk::PhysicalDeviceFeatures{
+			.fillModeNonSolid = true,
+		};
+
 		const auto DeviceCreateInfoChain = createStructureChain(
-			vk::DeviceCreateInfo{}
-			.setQueueCreateInfos(queueCreateInfos)
-			.setPEnabledExtensionNames(vk::deviceExtensions),
+			vk::DeviceCreateInfo{ .pEnabledFeatures = &features }
+				.setQueueCreateInfos(queueCreateInfos)
+				.setPEnabledExtensionNames(vk::deviceExtensions),
+			vk::PhysicalDeviceVulkan11Features{
+			},
 			vk::PhysicalDeviceVulkan12Features{
 				.timelineSemaphore = true,
 			},
@@ -259,11 +279,16 @@ void RenderThreadFunc(
 				.synchronization2 = true,
 				.dynamicRendering = true,
 			},
+			vk::PhysicalDeviceVulkan14Features{
+			},
 			// check how to replace with core vulkan
 			vk::PhysicalDeviceSwapchainMaintenance1FeaturesEXT{
 				.swapchainMaintenance1 = true,
+			}, // todo
+			vk::PhysicalDeviceVertexInputDynamicStateFeaturesEXT{
+				//.vertexInputDynamicState = true,
 			}
-			);
+		);
 
 		return PhysicalDevice.createDevice(DeviceCreateInfoChain.get<vk::DeviceCreateInfo>());
 	}();
@@ -352,7 +377,7 @@ void RenderThreadFunc(
 
 	const auto MinImageCount = [&] {
 		const auto DesiredMinImageCount = SurfaceCapabilities.minImageCount + 1;
-		const auto& maxImageCount = SurfaceCapabilities.maxImageCount;
+		const auto maxImageCount = SurfaceCapabilities.maxImageCount;
 
 		// https://registry.khronos.org/vulkan/specs/latest/man/html/VkSurfaceCapabilitiesKHR.html
 		// maxImageCount is the maximum number of images the specified device supports for a swapchain created for the surface,
@@ -360,9 +385,9 @@ void RenderThreadFunc(
 		// A value of 0 means that there is no limit on the number of images,
 		// though there may be limits related to the total amount of memory used by presentable images.
 		return maxImageCount ? std::min(DesiredMinImageCount, maxImageCount) : DesiredMinImageCount;
-		};
+	};
 
-	const auto ImageExtent = [&] {
+	const auto surfaceExtent = [&] {
 		// https://registry.khronos.org/vulkan/specs/latest/man/html/VkSurfaceCapabilitiesKHR.html
 		// currentExtent is the current width and height of the surface, or the special value (0xFFFFFFFF, 0xFFFFFFFF) indicating
 		// that the surface size will be determined by the extent of a swapchain targeting the surface.
@@ -416,7 +441,7 @@ void RenderThreadFunc(
 		.minImageCount = MinImageCount(),
 		.imageFormat = SurfaceFormat.format,
 		.imageColorSpace = SurfaceFormat.colorSpace,
-		.imageExtent = ImageExtent,
+		.imageExtent = surfaceExtent,
 		.imageArrayLayers = 1,
 		.imageUsage = vk::ImageUsageFlagBits::eColorAttachment,
 		.imageSharingMode = vk::SharingMode::eExclusive,
@@ -453,9 +478,17 @@ void RenderThreadFunc(
 	}();
 
 	const auto pipelineLayout = [&] {
-		const auto createInfo = vk::PipelineLayoutCreateInfo{};
+		const auto pushConstantRange = vk::PushConstantRange{
+			.stageFlags = vk::ShaderStageFlagBits::eVertex, // Make sure this includes vertex stage
+			.offset = 0,
+			.size = sizeof(glm::mat4),
+		};
+
+		const auto createInfo = vk::PipelineLayoutCreateInfo{}
+			.setPushConstantRanges(pushConstantRange);
+
 		return Device.createPipelineLayout(createInfo);
-		}();
+	}();
 
 	const auto createShaderModule = [&](const std::filesystem::path& path) {
 		const auto loadSPIRV = [](const std::filesystem::path& path) {
@@ -497,8 +530,32 @@ void RenderThreadFunc(
 	const auto combindedShaderModule = createShaderModule("shaders/combined.spv");
 
 	const auto graphicaPipeline = [&] {
+		struct Vertex
+		{
+			glm::vec3 pos;
+		};
+
 		// Vertex input state
-		const auto vertexInputState = vk::PipelineVertexInputStateCreateInfo{};
+		const auto vertexBindingDescriptions = {
+			vk::VertexInputBindingDescription{
+				.binding = 0,
+				.stride = sizeof(Vertex),
+				.inputRate = vk::VertexInputRate::eVertex,
+			},
+		};
+
+		const auto attributeDescriptions = {
+			vk::VertexInputAttributeDescription{
+				.location = 0,
+				.binding = 0,
+				.format = vk::Format::eR32G32B32Sfloat,
+				.offset = offsetof(Vertex, pos),
+			},
+		};
+
+		const auto vertexInputState = vk::PipelineVertexInputStateCreateInfo{}
+			.setVertexBindingDescriptions(vertexBindingDescriptions)
+			.setVertexAttributeDescriptions(attributeDescriptions);
 
 		// Input assembly
 		const auto inputAssemblyState = vk::PipelineInputAssemblyStateCreateInfo{
@@ -506,13 +563,15 @@ void RenderThreadFunc(
 			.primitiveRestartEnable = false
 		};
 
+		// https://www.saschawillems.de/blog/2019/03/29/flipping-the-vulkan-viewport/
 		const auto viewport = vk::Viewport{
-			.width = float(ImageExtent.width),
-			.height = float(ImageExtent.height),
+			.y = float(surfaceExtent.height),
+			.width = float(surfaceExtent.width),
+			.height = -float(surfaceExtent.height),
 			.maxDepth = 1,
 		};
 
-		const auto scissor = vk::Rect2D{ .extent = ImageExtent };
+		const auto scissor = vk::Rect2D{ .extent = surfaceExtent };
 
 		// Viewport state
 		const auto viewportState = vk::PipelineViewportStateCreateInfo{}
@@ -521,8 +580,8 @@ void RenderThreadFunc(
 
 		// Rasterization State
 		const auto rasterizationState = vk::PipelineRasterizationStateCreateInfo{
-			.polygonMode = vk::PolygonMode::eFill,
-			.cullMode = vk::CullModeFlagBits::eBack,
+			.polygonMode = vk::PolygonMode::eLine,
+			.cullMode = vk::CullModeFlagBits::eNone, // TODO
 			.frontFace = vk::FrontFace::eClockwise,
 			.lineWidth = 1.0f,
 		};
@@ -543,7 +602,8 @@ void RenderThreadFunc(
 
 		// Dynamic state
 		const auto dynamicStates = {
-			vk::DynamicState::ePrimitiveTopology,
+			//vk::DynamicState::ePrimitiveTopology,
+			vk::DynamicState::eVertexInputBindingStride,
 		};
 
 		const auto dynamicState = vk::PipelineDynamicStateCreateInfo{}.setDynamicStates(dynamicStates);
@@ -563,7 +623,7 @@ void RenderThreadFunc(
 		};
 
 		const auto pipelineRendering = vk::PipelineRenderingCreateInfo{}
-		.setColorAttachmentFormats(SurfaceFormat.format);
+			.setColorAttachmentFormats(SurfaceFormat.format);
 
 		const auto createInfo = vk::GraphicsPipelineCreateInfo{
 			.pNext = &pipelineRendering,
@@ -573,7 +633,7 @@ void RenderThreadFunc(
 			.pRasterizationState = &rasterizationState,
 			.pMultisampleState = &multisampleState,
 			.pColorBlendState = &colorBlendState,
-			//.pDynamicState = &dynamicState,
+			.pDynamicState = &dynamicState,
 			.layout = *pipelineLayout,
 		}.setStages(stages);
 
@@ -608,7 +668,7 @@ void RenderThreadFunc(
 							return Device.createSemaphore(CreateInfo);
 						}(),
 						.timeline = [&] {
-							const auto typeCreateInfo = vk::SemaphoreTypeCreateInfo {
+							const auto typeCreateInfo = vk::SemaphoreTypeCreateInfo{
 								.semaphoreType = vk::SemaphoreType::eTimeline,
 								.initialValue = 0,
 							};
@@ -617,7 +677,7 @@ void RenderThreadFunc(
 							return Device.createSemaphore(CreateInfo);
 						}(),
 						.present = [&] {
-							const auto CreateInfo = vk::FenceCreateInfo{.flags = vk::FenceCreateFlagBits::eSignaled };
+							const auto CreateInfo = vk::FenceCreateInfo{ .flags = vk::FenceCreateFlagBits::eSignaled };
 							return Device.createFence(CreateInfo);
 						}(),
 					};
@@ -700,7 +760,7 @@ void RenderThreadFunc(
 			.device = Device,
 		};
 		return GltfModel(createInfo);
-		}();
+	}();
 
 	auto frameNumber = 0u;
 	while (not stop_token.stop_requested())
@@ -780,21 +840,62 @@ void RenderThreadFunc(
 						.imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
 						.loadOp = vk::AttachmentLoadOp::eClear,
 						.storeOp = vk::AttachmentStoreOp::eStore,
-						.clearValue = {.color = std::to_array({0.5f, 0.5f, 0.5f, 1.0f}) },
+						.clearValue = { .color = std::to_array({0.1f, 0.1f, 0.1f, 1.0f}) },
 					},
 				};
 
 				const auto renderingInfo = vk::RenderingInfo{
-					.renderArea = vk::Rect2D{.extent = ImageExtent },
+					.renderArea = vk::Rect2D{.extent = surfaceExtent },
 					.layerCount = 1,
 				}.setColorAttachments(colorAttachments);
 
 				commandBuffer.beginRendering(renderingInfo);
 
-				gltfModel.Draw(0, commandBuffer); //TODO: handle scene index
-
 				commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *graphicaPipeline);
-				commandBuffer.draw(3, 1, 0, 0);
+
+				// TODO: temp solution, rework
+				const auto createViewProj = [&]
+				{
+					// view matrix
+					constexpr auto target = glm::vec3(0.0f, 0.0f, 0.0f);
+					constexpr auto up = glm::vec3(0.0f, 1.0f, 0.0f);
+
+					constexpr auto position = glm::vec3(0.0f, 0.0f, 5.0f); // TODO: use dolly, azimuth, altitude
+
+					const auto view = glm::lookAt(position, target, up);
+
+					// projection matrix
+					const auto width = static_cast<float>(surfaceExtent.width);
+					const auto height = static_cast<float>(surfaceExtent.height);
+					constexpr float fovY = glm::radians(45.0f);
+					const float aspect = width / height;  // width and height of the viewport
+					constexpr float nearPlane = 0.1f;
+					constexpr float farPlane = 100.0f;
+
+					const auto proj = glm::perspective(fovY, aspect, nearPlane, farPlane);
+
+					return proj * view;
+				};
+
+				const auto viewProj = createViewProj();
+				//const auto pushConstantRange = vk::PushConstantRange{
+				//	.stageFlags = vk::ShaderStageFlagBits::eVertex,
+				//	.offset = 0,
+				//	.size = sizeof(glm::mat4),
+				//};
+
+				const auto pushConstantsInfo = vk::PushConstantsInfo{
+					.layout = *pipelineLayout,
+					.stageFlags = vk::ShaderStageFlagBits::eVertex,
+					.offset = 0,
+					.size = sizeof(viewProj),
+					.pValues = &viewProj,
+				};
+
+				commandBuffer.pushConstants2(pushConstantsInfo);
+
+				gltfModel.Draw(0, commandBuffer); //TODO: handle scene index
+				//commandBuffer.draw(3, 1, 0, 0);
 
 				commandBuffer.endRendering();
 

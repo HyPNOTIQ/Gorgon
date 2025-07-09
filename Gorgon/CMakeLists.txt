@@ -25,6 +25,7 @@ target_link_libraries(Gorgon PRIVATE
 	glfw
 	tinygltf
 	VulkanMemoryAllocator
+	dylib
 )
 
 set_property(TARGET Gorgon PROPERTY CXX_STANDARD 23)
@@ -49,6 +50,7 @@ foreach(SHADER ${SHADER_FILES})
 				${SHADER}
 				-o ${OUTPUT_SPV}
 				-depfile ${DEP_FILE}
+				-D SLANG_SOURCE_FILE
 		DEPENDS ${SHADER}
 		DEPFILE ${DEP_FILE}
 		COMMENT "Compiling ${SHADER_NAME}.slang with slangc"
