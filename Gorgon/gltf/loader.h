@@ -5,16 +5,26 @@
 namespace gltf
 {
 
+enum class TexcoordType : uint8_t {
+	None = 0,
+	Float2 = 1,
+	Half2 = 2,
+	Uint16_2 = 3
+};
+
 union PrimitivePipelineInfo
 {
 	struct {
-		bool normal : 1;
-		//size_t hasTangent : 1;
-		//size_t texcoordType : 2; // 0 = none, 1�3 = valid
-		//size_t colorType : 3; // 0 = none, 1�6 = valid
-	};
+		size_t normal : 1;
+		size_t tangent : 1;
+		size_t texcoord_0 : 2;
+		size_t texcoord_1 : 2;
+		size_t color_0 : 3;
+	} data;
 
 	size_t packed = 0;
+
+	static_assert(sizeof(packed) >= sizeof(data));
 };
 
 class Loader
@@ -26,8 +36,8 @@ public:
 		const VulkanMemoryAllocator& vma;
 		const vk::raii::CommandBuffer& transferCommandBuffer;
 		const vk::raii::Queue& transferQueue;
-		//vk::Extent2D surfaceExtent;
 		vk::Format surfaceFormat;
+		vk::Format depthFormat;
 	};
 
     Model loadFromFile(const std::string_view& gltfFile);
@@ -47,6 +57,7 @@ private:
 	vk::raii::ShaderModule shaderModule;
 	vk::raii::PipelineLayout pipelineLayout;
 	vk::Format surfaceFormat;
+	vk::Format depthFormat;
 
 	static vk::raii::ShaderModule createShaderModule(const vk::raii::Device& device);
 	static vk::raii::PipelineLayout createPipelineLayout(const vk::raii::Device& device);

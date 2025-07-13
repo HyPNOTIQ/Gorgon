@@ -8,9 +8,9 @@ struct PushConstants
 typedef uint PrimitiveFlagsInt;
 
 struct PrimitiveFlags {
-    PrimitiveFlagsInt NORMAL : 1;
-    PrimitiveFlagsInt TANGENT : 1;
-    PrimitiveFlagsInt TEXCOORD_0 : 1;
-    PrimitiveFlagsInt TEXCOORD_1 : 1;
-    PrimitiveFlagsInt COLOR_0 : 2;
+    PrimitiveFlagsInt normal : 1;
+    PrimitiveFlagsInt tangent : 1;
+    PrimitiveFlagsInt texcoord_0 : 1;
+    PrimitiveFlagsInt texcoord_1 : 1;
+    PrimitiveFlagsInt color_0 : 2;
 };

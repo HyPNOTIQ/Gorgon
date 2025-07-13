@@ -12,6 +12,7 @@ Loader::Loader(const CreateInfo& info)
 	, pipelineLayout(createPipelineLayout(info.device))
 	, shaderModule(createShaderModule(info.device))
 	, surfaceFormat(info.surfaceFormat)
+	, depthFormat(info.depthFormat)
 {
 }
 
@@ -41,37 +42,88 @@ vk::Pipeline Loader::getPipeline(const PrimitivePipelineInfo& info)
 		// POSITION
 		addDescription(0, vk::Format::eR32G32B32Sfloat);
 
+		union {
+			PrimitiveFlags data;
+			PrimitiveFlagsInt packed = 0;
+
+			static_assert(sizeof(packed) >= sizeof(data));
+		} primitiveFlags;
+
 		// NORMAL
-		if (info.normal)
+		if (info.data.normal)
 		{
 			addDescription(1, vk::Format::eR32G32B32Sfloat);
+			primitiveFlags.data.normal = 1;
 		}
 
-#if 0
 		// TANGENT
 		if (info.data.tangent)
 		{
 			addDescription(2, vk::Format::eR32G32B32A32Sfloat);
+			primitiveFlags.data.tangent = 1;
 		}
 
 		// TEXCOORD_0
-		if (info.data.texcoord_0 != PrimitivePipelineInfo::eTexcoord::None)
+		if (info.data.texcoord_0)
 		{
-			addDescription(3, vk::Format::eR32G32Sfloat); // TODO: handle format
+			const auto format = [&]
+			{
+				vk::Format result;
+				switch (info.data.texcoord_0) {
+				case 1: result = vk::Format::eR32G32Sfloat; break;
+				case 2: result = vk::Format::eR8G8Unorm; break;
+				case 3: result = vk::Format::eR16G16Unorm; break;
+				default: assert(false);
+				}
+
+				return result;
+			}();
+			addDescription(3, format); // TODO: handle format
+			primitiveFlags.data.texcoord_0 = 1;
 		}
 
 		// TEXCOORD_1
-		if (info.data.texcoord_1 != PrimitivePipelineInfo::eTexcoord::None)
+		if (info.data.texcoord_1)
 		{
-			addDescription(4, vk::Format::eR32G32Sfloat); // TODO: handle format
+			const auto format = [&]
+				{
+					vk::Format result;
+					switch (info.data.texcoord_0) {
+					case 1: result = vk::Format::eR32G32Sfloat; break;
+					case 2: result = vk::Format::eR8G8Unorm; break;
+					case 3: result = vk::Format::eR16G16Unorm; break;
+					default: assert(false);
+					}
+
+					return result;
+			}();
+
+			addDescription(4, format); // TODO: handle format
+			primitiveFlags.data.texcoord_1 = 1;
 		}
 
 		// COLOR3_0
-		if (info.data.color_0 != PrimitivePipelineInfo::eColor::None)
+		if (info.data.color_0)
 		{
-			addDescription(5, vk::Format::eR32G32B32Sfloat); // TODO: handle format
+			const auto format = [&]
+			{
+				vk::Format result;
+				switch (info.data.color_0) {
+				case 1: result = vk::Format::eR32G32B32Sfloat; break;
+				case 2: result = vk::Format::eR8G8B8A8Unorm; break;
+				case 3: result = vk::Format::eR16G16B16A16Unorm; break;
+				case 4: result = vk::Format::eR32G32B32A32Sfloat; break;
+				case 5: result = vk::Format::eR8G8B8Unorm; break;
+				case 6: result = vk::Format::eR16G16B16Unorm; break;
+				default: assert(false);
+				}
+
+				return result;
+			}();
+			addDescription(5, format);
+
+			primitiveFlags.data.color_0 = 1;
 		}
-#endif // 0
 
 		const auto vertexInputState = vk::PipelineVertexInputStateCreateInfo{}
 			.setVertexBindingDescriptions(bindingDescriptions)
@@ -91,7 +143,7 @@ vk::Pipeline Loader::getPipeline(const PrimitivePipelineInfo& info)
 
 		// Rasterization State
 		const auto rasterizationState = vk::PipelineRasterizationStateCreateInfo{
-			.polygonMode = vk::PolygonMode::eLine,
+			.polygonMode = vk::PolygonMode::eFill,
 			.cullMode = vk::CullModeFlagBits::eBack,
 			.lineWidth = 1.0f,
 		};
@@ -100,6 +152,13 @@ vk::Pipeline Loader::getPipeline(const PrimitivePipelineInfo& info)
 		const auto multisampleState = vk::PipelineMultisampleStateCreateInfo{
 			.rasterizationSamples = vk::SampleCountFlagBits::e1,
 			.minSampleShading = 1.0f,
+		};
+
+		// Depth
+		const auto depthStencilState = vk::PipelineDepthStencilStateCreateInfo{
+			.depthTestEnable = true,
+			.depthWriteEnable = true,
+			.depthCompareOp = vk::CompareOp::eLess,
 		};
 
 		// Color blend state
@@ -121,21 +180,37 @@ vk::Pipeline Loader::getPipeline(const PrimitivePipelineInfo& info)
 
 		const auto dynamicState = vk::PipelineDynamicStateCreateInfo{}.setDynamicStates(dynamicStates);
 
-		// Stages
-		const auto stages = {
-			vk::PipelineShaderStageCreateInfo{
-				.stage = vk::ShaderStageFlagBits::eFragment,
-				.module = *shaderModule,
-				.pName = "main",
-			},
-			vk::PipelineShaderStageCreateInfo{ // TODO: why two stages is needed? try merge into one
-				.stage = vk::ShaderStageFlagBits::eVertex,
-				.module = *shaderModule,
-				.pName = "main",
+		const auto SpecializationMapEntries = {
+			vk::SpecializationMapEntry{
+				.constantID = 0,
+				.offset = 0,
+				.size = sizeof(primitiveFlags.packed),
 			},
 		};
 
-		const auto pipelineRendering = vk::PipelineRenderingCreateInfo{}.setColorAttachmentFormats(surfaceFormat);
+		const auto specializationInfo = vk::SpecializationInfo{
+			.dataSize = sizeof(primitiveFlags.packed),
+			.pData = &primitiveFlags.packed,
+		}.setMapEntries(SpecializationMapEntries);
+		//.setData(primitiveFlags.packed);
+
+		const auto createPipelineShaderStageCreateInfo = [&](const vk::ShaderStageFlagBits stage) {
+			return vk::PipelineShaderStageCreateInfo{
+				.stage = stage,
+				.module = *shaderModule,
+				.pName = "main",
+				.pSpecializationInfo = &specializationInfo,
+			};
+		};
+
+		const auto stages = {
+			createPipelineShaderStageCreateInfo(vk::ShaderStageFlagBits::eFragment),
+			createPipelineShaderStageCreateInfo(vk::ShaderStageFlagBits::eVertex),
+		};
+
+		const auto pipelineRendering = vk::PipelineRenderingCreateInfo{}
+		.setColorAttachmentFormats(surfaceFormat)
+		.setDepthAttachmentFormat(depthFormat);
 
 		const auto createInfo = vk::GraphicsPipelineCreateInfo{
 			.pNext = &pipelineRendering,
@@ -144,6 +219,7 @@ vk::Pipeline Loader::getPipeline(const PrimitivePipelineInfo& info)
 			.pViewportState = &viewportState,
 			.pRasterizationState = &rasterizationState,
 			.pMultisampleState = &multisampleState,
+			.pDepthStencilState = &depthStencilState,
 			.pColorBlendState = &colorBlendState,
 			.pDynamicState = &dynamicState,
 			.layout = *pipelineLayout,
@@ -197,9 +273,8 @@ vk::raii::ShaderModule Loader::createShaderModule(const vk::raii::Device& device
 
 vk::raii::PipelineLayout Loader::createPipelineLayout(const vk::raii::Device& device)
 {
-	const auto pushConstantRange = vk::PushConstantRange{
+	constexpr auto pushConstantRange = vk::PushConstantRange{
 		.stageFlags = vk::ShaderStageFlagBits::eVertex,
-		.offset = 0,
 		.size = sizeof(PushConstants),
 	};
 

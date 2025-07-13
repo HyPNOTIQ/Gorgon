@@ -1,36 +1,52 @@
 #pragma once
 
+class VmaImage
+{
+public:
+	VmaImage(const VmaImage&) = delete;
+	VmaImage(VmaImage&& rhs) noexcept;
+	VmaImage& operator=(const VmaImage&) = delete;
+	VmaImage& operator=(VmaImage&& rhs) noexcept;
+
+	~VmaImage();
+
+	vk::Image operator*() const;
+
+private:
+	VmaImage(
+		const VkImage image,
+		const VmaAllocation allocation,
+		const VmaAllocator allocator) noexcept;
+
+	vk::Image image;
+	VmaAllocation allocation;
+	VmaAllocator allocator;
+
+	friend class VulkanMemoryAllocator;
+};
+
 class VmaBuffer
 {
 public:
 	VmaBuffer(const VmaBuffer&) = delete;
-	VmaBuffer(VmaBuffer&& rhs) noexcept = default;
+	VmaBuffer(VmaBuffer&& rhs) noexcept;
 	VmaBuffer& operator=(const VmaBuffer&) = delete;
-	VmaBuffer& operator=(VmaBuffer&& rhs) noexcept = default;
+	VmaBuffer& operator=(VmaBuffer&& rhs) noexcept;
 
 	~VmaBuffer();
 
-	//vk::Result MapMemory(void** const ppData) const;
 	vk::Result CopyMemoryToAllocation(
 		const void* const pSrcHostPointer,
 		const vk::DeviceSize size) const;
 
-	//void UnmapMemory() const;
-
 	vk::DeviceSize offset() const;
 	vk::Buffer operator*() const;
-	//{
-	//	return buffer;
-	//}
 
 private:
 	VmaBuffer(
 		const VkBuffer buffer,
 		const VmaAllocation allocation,
 		const VmaAllocator allocator) noexcept;
-
-	//	: buffer(buffer), allocation(allocation), allocator(allocator) {
-	//}
 
 	vk::Buffer buffer;
 	VmaAllocation allocation;
@@ -42,10 +58,6 @@ private:
 class VulkanMemoryAllocator
 {
 public:
-	//static vk::BufferCopy createBufferCopy(
-	//	const vmaBuffer& src,
-	//	const vmaBuffer& dst,
-	//	const vk::DeviceSize size);
 	struct CreateInfo
 	{
 		const vk::raii::Instance& instance;
@@ -55,9 +67,13 @@ public:
 
 	VulkanMemoryAllocator(const CreateInfo& createInfo);
 	~VulkanMemoryAllocator();
-	VmaBuffer CreateBuffer(
+	VmaBuffer createBuffer(
 		const vk::DeviceSize size,
 		const vk::BufferUsageFlags usage,
+		const VmaAllocationCreateFlags flags) const; // TODO
+
+	VmaImage createImage(
+		const vk::ImageCreateInfo& info,
 		const VmaAllocationCreateFlags flags) const;
 
 private:

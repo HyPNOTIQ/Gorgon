@@ -1,5 +1,57 @@
 #include "vma.h"
 
+VmaImage::VmaImage(VmaImage&& rhs) noexcept
+	: image(vk::exchange(rhs.image, {}))
+	, allocation(rhs.allocation)
+	, allocator(rhs.allocator)
+{}
+
+VmaImage& VmaImage::operator=(VmaImage&& rhs) noexcept
+{
+	image = vk::exchange(rhs.image, {});
+	allocation = rhs.allocation;
+	allocator = rhs.allocator;
+
+	return *this;
+}
+
+VmaImage::VmaImage(
+	const VkImage image,
+	const VmaAllocation allocation,
+	const VmaAllocator allocator) noexcept
+	: image(image)
+	, allocation(allocation)
+	, allocator(allocator)
+{}
+
+VmaImage::~VmaImage()
+{
+	if (image)
+	{
+		vmaDestroyImage(allocator, image, allocation);
+	}
+}
+
+vk::Image VmaImage::operator*() const
+{
+	return image;
+}
+
+VmaBuffer::VmaBuffer(VmaBuffer&& rhs) noexcept
+	: buffer(vk::exchange(rhs.buffer, {}))
+	, allocation(rhs.allocation)
+	, allocator(rhs.allocator)
+{}
+
+VmaBuffer& VmaBuffer::operator=(VmaBuffer&& rhs) noexcept
+{
+	buffer = vk::exchange(rhs.buffer, {});
+	allocation = rhs.allocation;
+	allocator = rhs.allocator;
+
+	return *this;
+}
+
 VmaBuffer::VmaBuffer(
 	const VkBuffer buffer,
 	const VmaAllocation allocation,
@@ -100,7 +152,7 @@ VulkanMemoryAllocator::~VulkanMemoryAllocator()
 	vmaDestroyAllocator(allocator);
 }
 
-VmaBuffer VulkanMemoryAllocator::CreateBuffer(
+VmaBuffer VulkanMemoryAllocator::createBuffer(
 	const vk::DeviceSize size,
 	const vk::BufferUsageFlags usage,
 	const VmaAllocationCreateFlags flags) const
@@ -126,103 +178,36 @@ VmaBuffer VulkanMemoryAllocator::CreateBuffer(
 		&allocation,
 		nullptr
 	);
+
+	assert(result == VK_SUCCESS);
 
 	return VmaBuffer(buffer, allocation, allocator);
 }
 
-#if 0
-vk::BufferCopy VulkanMemoryAllocator::createBufferCopy(
-	const vmaBuffer& src,
-	const vmaBuffer& dst,
-	const vk::DeviceSize size)
-{
-	return vk::BufferCopy{
-		.srcOffset = src.Offset(),
-		.dstOffset = dst.Offset(),
-		.size = size
-	};
-}
-
-
-
-VulkanMemoryAllocator::~VulkanMemoryAllocator()
-{
-	vmaDestroyAllocator(allocator);
-}
-
-vmaBuffer VulkanMemoryAllocator::CreateBuffer(
-	const vk::DeviceSize size,
-	const vk::BufferUsageFlags usage,
+VmaImage VulkanMemoryAllocator::createImage(
+	const vk::ImageCreateInfo& info,
 	const VmaAllocationCreateFlags flags) const
 {
-	const VkBufferCreateInfo bufferCreateInfo = vk::BufferCreateInfo{
-		.size = size,
-		.usage = usage,
-		.sharingMode = vk::SharingMode::eExclusive,
-	};
-
 	const auto allocationCreateInfo = VmaAllocationCreateInfo{
 		.flags = flags,
 		.usage = VMA_MEMORY_USAGE_AUTO,
 	};
 
-	VkBuffer buffer;
+	VkImage image;
 	VmaAllocation allocation;
-	const auto result = vmaCreateBuffer(
+	const auto result = vmaCreateImage(
 		allocator,
-		&bufferCreateInfo,
+		&*info,
 		&allocationCreateInfo,
-		&buffer,
+		&image,
 		&allocation,
 		nullptr
 	);
 
-	return vmaBuffer(buffer, allocation, allocator);
+	assert(result == VK_SUCCESS);
+
+	return VmaImage(image, allocation, allocator);
 }
-
-vmaBuffer::~vmaBuffer()
-{
-	if (buffer)
-	{
-		vmaDestroyBuffer(allocator, buffer, allocation);
-	}
-}
-
-
-
-vk::Result vmaBuffer::MapMemory(void** ppData) const
-{
-	const auto result = vmaMapMemory(allocator, allocation, ppData);
-	return static_cast<vk::Result>(result);
-}
-
-vk::Result vmaBuffer::CopyMemoryToAllocation(
-	const void* pSrcHostPointer,
-	const vk::DeviceSize size) const
-{
-	const auto result = vmaCopyMemoryToAllocation(
-		allocator,
-		pSrcHostPointer,
-		allocation,
-		0,
-		size
-	);
-
-	return static_cast<vk::Result>(result);
-}
-
-void vmaBuffer::UnmapMemory() const
-{
-	vmaUnmapMemory(allocator, allocation);
-}
-
-vk::DeviceSize vmaBuffer::Offset() const
-{
-	VmaAllocationInfo pAllocationInfo;
-	vmaGetAllocationInfo(allocator, allocation, &pAllocationInfo);
-	return pAllocationInfo.offset;
-}
-#endif
 
 #define VMA_IMPLEMENTATION
 #include "vk_mem_alloc.h"

@@ -12,20 +12,6 @@ void Primitive::Draw(const DrawInfo& info) const
 
 	commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline);
 
-	const auto pushConstants = PushConstants{
-		.mvp = info.mvp,
-	};
-
-	const auto pushConstantsInfo = vk::PushConstantsInfo{
-		.layout = pipelineLayout,
-		.stageFlags = vk::ShaderStageFlagBits::eVertex,
-		.offset = 0,
-		.size = sizeof(pushConstants),
-		.pValues = &pushConstants,
-	};
-
-	commandBuffer.pushConstants2(pushConstantsInfo);
-
 	// dynamic states
 	commandBuffer.setPrimitiveTopology(topology);
 	commandBuffer.setFrontFace(info.frontFace);
@@ -93,7 +79,6 @@ void Primitive::VertexBindData::add(
 void Mesh::Draw(const DrawInfo& info) const
 {
 	const auto primitiveDrawInfo = Primitive::DrawInfo{
-		.mvp = info.mvp,
 		.commandBuffer = info.commandBuffer,
 		.surfaceExtent = info.surfaceExtent,
 	};
@@ -105,10 +90,23 @@ void Node::Draw(const DrawInfo& info) const
 {
 	if (this->mesh)
 	{
+		const auto pushConstants = PushConstants{
+			.mvp = info.viewProj * transform,
+		};
+
+		const auto pushConstantsInfo = vk::PushConstantsInfo{
+			.layout = pipelineLayout,
+			.stageFlags = vk::ShaderStageFlagBits::eVertex,
+			.offset = 0,
+			.size = sizeof(pushConstants),
+			.pValues = &pushConstants,
+		};
+
+		info.commandBuffer.pushConstants2(pushConstantsInfo);
+
 		const auto& mesh = this->mesh->get();
 
 		const auto meshDrawInfo = Mesh::DrawInfo{
-			.mvp = info.viewProj * transform,
 			.commandBuffer = info.commandBuffer,
 			.surfaceExtent = info.surfaceExtent,
 		};

@@ -130,13 +130,13 @@ Model Loader::loadFromFile(const std::string_view& gltfFile)
 			const auto transform = [&](const tinygltf::Buffer& buffer) {
 				const auto size = bufferSize(buffer);
 
-				auto stagingBuffer = vma.CreateBuffer(
+				auto stagingBuffer = vma.createBuffer(
 					size,
 					vk::BufferUsageFlagBits::eTransferSrc,
 					VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT // TODO:  VMA_ALLOCATION_CREATE_MAPPED_BIT?
 				);
 
-				auto deviceBuffer = vma.CreateBuffer(
+				auto deviceBuffer = vma.createBuffer(
 					size,
 					vk::BufferUsageFlagBits::eVertexBuffer |
 					vk::BufferUsageFlagBits::eIndexBuffer |
@@ -188,33 +188,6 @@ Model Loader::loadFromFile(const std::string_view& gltfFile)
 
 	}();
 
-	// Buffer views
-	//const auto createBufferView = [&](const tinygltf::BufferView& bufferView) {
-	//	return BufferView{
-	//		.buffer = buffers[bufferView.buffer],
-	//		.byteOffset = bufferView.byteOffset,
-	//		.byteStride = bufferView.byteStride,
-	//		.byteLength = bufferView.byteLength,
-	//	};
-	//};
-
-	//auto bufferViews = model.bufferViews
-	//	| std::views::transform([&](const auto& bufferView) { return createBufferView(bufferView); })
-	//	| std::ranges::to<std::vector<BufferView>>();
-
-	//const auto createAccessor = [&](const tinygltf::Accessor& accessor) {
-	//	return Accessor{
-	//		.bufferView = bufferViews[accessor.bufferView],
-	//		.byteOffset = accessor.byteOffset,
-	//		.count = accessor.count,
-	//		.elemSize = getElemSize(accessor),
-	//	};
-	//};
-
-	//auto accessors = model.accessors
-	//	| std::views::transform([&](const auto& accessor) { return createAccessor(accessor); })
-	//	| std::ranges::to<std::vector<Accessor>>();
-
 	const auto createPrimitive = [&](const tinygltf::Primitive& primitive) {
 		const auto getPrimitiveMode = [&] {
 			vk::PrimitiveTopology result;
@@ -251,8 +224,8 @@ Model Loader::loadFromFile(const std::string_view& gltfFile)
 		const auto& accessors = model.accessors;
 
 		auto count = uint32_t{};
-
 		auto drawFunc = &Primitive::DrawNonIndexed;
+
 		if (const auto it = primitive.attributes.find("POSITION"); it != primitive.attributes.end())
 		{
 			const auto& accessor = accessors[it->second];
@@ -261,6 +234,120 @@ Model Loader::loadFromFile(const std::string_view& gltfFile)
 			vertexBindData.add(buffer, offset, size, stride);
 
 			count = accessor.count;
+		}
+
+		if (const auto it = primitive.attributes.find("NORMAL"); it != primitive.attributes.end())
+		{
+			const auto& accessor = accessors[it->second];
+			const auto [buffer, offset, size, stride] = getBindingData(accessor);
+
+			vertexBindData.add(buffer, offset, size, stride);
+
+			primitivePipelineInfo.data.normal = 1;
+		}
+
+		if (const auto it = primitive.attributes.find("TANGENT"); it != primitive.attributes.end())
+		{
+			const auto& accessor = accessors[it->second];
+			const auto [buffer, offset, size, stride] = getBindingData(accessor);
+
+			vertexBindData.add(buffer, offset, size, stride);
+
+			primitivePipelineInfo.data.tangent = 1;
+		}
+
+		if (const auto it = primitive.attributes.find("TEXCOORD_0"); it != primitive.attributes.end())
+		{
+			const auto& accessor = accessors[it->second];
+			const auto [buffer, offset, size, stride] = getBindingData(accessor);
+
+			vertexBindData.add(buffer, offset, size, stride);
+
+			if (accessor.componentType == TINYGLTF_COMPONENT_TYPE_FLOAT)
+			{
+				primitivePipelineInfo.data.texcoord_0 = 1;
+			}
+			else if (accessor.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE)
+			{
+				primitivePipelineInfo.data.texcoord_0 = 2;
+			}
+			else if (accessor.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT)
+			{
+				primitivePipelineInfo.data.texcoord_0 = 3;
+			}
+			else
+			{
+				assert(false);
+			}
+		}
+
+		if (const auto it = primitive.attributes.find("TEXCOORD_1"); it != primitive.attributes.end())
+		{
+			const auto& accessor = accessors[it->second];
+			const auto [buffer, offset, size, stride] = getBindingData(accessor);
+
+			vertexBindData.add(buffer, offset, size, stride);
+
+			if (accessor.componentType == TINYGLTF_COMPONENT_TYPE_FLOAT)
+			{
+				primitivePipelineInfo.data.texcoord_1 = 1;
+			}
+			else if (accessor.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE)
+			{
+				primitivePipelineInfo.data.texcoord_1 = 2;
+			}
+			else if (accessor.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT)
+			{
+				primitivePipelineInfo.data.texcoord_1 = 3;
+			}
+			else
+			{
+				assert(false);
+			}
+		}
+
+		if (const auto it = primitive.attributes.find("COLOR_0"); it != primitive.attributes.end())
+		{
+			const auto& accessor = accessors[it->second];
+			const auto [buffer, offset, size, stride] = getBindingData(accessor);
+
+			vertexBindData.add(buffer, offset, size, stride);
+
+			if (accessor.type == TINYGLTF_TYPE_VEC3)
+			{
+				if (accessor.componentType == TINYGLTF_COMPONENT_TYPE_FLOAT)
+				{
+					primitivePipelineInfo.data.color_0 = 1;
+				}
+				else if (accessor.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE)
+				{
+					primitivePipelineInfo.data.color_0 = 2;
+				}
+				else if (accessor.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT)
+				{
+					primitivePipelineInfo.data.color_0 = 3;
+				}
+			}
+			else if (accessor.type == TINYGLTF_TYPE_VEC4)
+			{
+				if (accessor.componentType == TINYGLTF_COMPONENT_TYPE_FLOAT)
+				{
+					primitivePipelineInfo.data.color_0 = 4;
+				}
+				else if (accessor.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE)
+				{
+					primitivePipelineInfo.data.color_0 = 5;
+				}
+				else if (accessor.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT)
+				{
+					primitivePipelineInfo.data.color_0 = 6;
+				}
+			}
+			else
+			{
+				assert(false);
+			}
+
 		}
 
 		auto indexedData = [&] -> decltype(Primitive::indexedData) {
@@ -303,7 +390,6 @@ Model Loader::loadFromFile(const std::string_view& gltfFile)
 			.vertexBindData = std::move(vertexBindData),
 			.topology = getPrimitiveMode(),
 			.pipeline = getPipeline(primitivePipelineInfo),
-			.pipelineLayout = pipelineLayout,
 			.count = count,
 			.indexedData = std::move(indexedData),
 			.drawFunc = drawFunc,
@@ -333,6 +419,7 @@ Model Loader::loadFromFile(const std::string_view& gltfFile)
 			.transform = transform,
 			.mesh = node.mesh == -1 ? std::nullopt : std::make_optional(std::ref(meshes[node.mesh])),
 			.frontFace = glm::determinant(transform) > 0.0f ? vk::FrontFace::eCounterClockwise : vk::FrontFace::eClockwise,
+			.pipelineLayout = pipelineLayout,
 			.children = std::move(children),
 		};
 	};

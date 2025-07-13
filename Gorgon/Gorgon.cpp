@@ -170,7 +170,7 @@ void RenderThreadFunc(
 			assert(false);
 		}
 
-		// construct directly from handle since glfw creates surface
+		// construct directly from surface handle created by glfw
 		return vk::raii::SurfaceKHR(Instance, surface);
 	}();
 
@@ -439,10 +439,10 @@ void RenderThreadFunc(
 
 	const auto Swapchain = Device.createSwapchainKHR(SwapchainCreateInfo);
 
-	const auto swapChainImages = Swapchain.getImages();
+	const auto swapchainImages = Swapchain.getImages();
 
-	const auto swapChainImageViews = [&] {
-		const auto createImageViewL = [&](const vk::Image& image) {
+	const auto swapchainImageViews = [&] {
+		const auto createImageView = [&](const vk::Image& image) {
 			const auto createInfo = vk::ImageViewCreateInfo{
 				.image = image,
 				.viewType = vk::ImageViewType::e2D,
@@ -458,64 +458,129 @@ void RenderThreadFunc(
 			return Device.createImageView(createInfo);
 			};
 
-		return swapChainImages
-			| std::views::transform(createImageViewL)
+		return swapchainImages
+			| std::views::transform(createImageView)
 			| std::ranges::to<std::vector>();
 	}();
 
-	const auto frameSynchronizations = [&]
+	const auto depthFormat = [&] {
+		vk::Format result;
+
+		const auto candidates = {
+			vk::Format::eD32Sfloat,
+			vk::Format::eD32SfloatS8Uint,
+			vk::Format::eD24UnormS8Uint,
+			vk::Format::eD16Unorm,
+			vk::Format::eD16UnormS8Uint,
+		};
+
+		for (const auto format : candidates)
 		{
-			struct FrameSynchronization
+			const auto props = PhysicalDevice.getFormatProperties2(format);
+
+			if (props.formatProperties.optimalTilingFeatures & vk::FormatFeatureFlagBits::eDepthStencilAttachment)
 			{
-				vk::raii::Semaphore acquireNextImage;
-				vk::raii::Semaphore prePresent;
-				vk::raii::Semaphore timeline;
-				vk::raii::Fence present;
+				result = format;
+				break;
+			}
+		}
+
+		return result;
+	}();
+
+	const auto depthImage = [&] {
+		const auto extent = vk::Extent3D{
+			.width = surfaceExtent.width,
+			.height = surfaceExtent.height,
+			.depth = 1,
+		};
+
+		const auto createInfo = vk::ImageCreateInfo{
+			.imageType = vk::ImageType::e2D,
+			.format = depthFormat,
+			.extent = extent,
+			.mipLevels = 1,
+			.arrayLayers = 1,
+			.samples = vk::SampleCountFlagBits::e1,
+			.tiling = vk::ImageTiling::eOptimal,
+			.usage = vk::ImageUsageFlagBits::eDepthStencilAttachment,
+			.sharingMode = vk::SharingMode::eExclusive,
+		};
+
+		const auto vmaFlags = VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
+
+		return vma.createImage(createInfo, vmaFlags);
+	}();
+
+	const auto depthImageView = [&] {
+		const auto subresourceRange = vk::ImageSubresourceRange{
+			.aspectMask = vk::ImageAspectFlagBits::eDepth,
+			.levelCount = 1,
+			.layerCount = 1,
+		};
+
+		const auto createInfo = vk::ImageViewCreateInfo{
+			.image = *depthImage,
+			.viewType = vk::ImageViewType::e2D,
+			.format = depthFormat,
+			.subresourceRange = subresourceRange,
+		};
+
+		return Device.createImageView(createInfo);
+	}();
+
+	const auto frameSynchronizations = [&] {
+		struct FrameSynchronization
+		{
+			vk::raii::Semaphore acquireNextImage;
+			vk::raii::Semaphore prePresent;
+			vk::raii::Semaphore timeline;
+			vk::raii::Fence present;
+		};
+
+		// TODO
+		//vku::small::vector<FrameSynchronization, MAX_PENDING_FRAMES> Result;
+
+		std::vector<FrameSynchronization> Result;
+		Result.reserve(MAX_PENDING_FRAMES);
+
+		const auto generateFunc = [&]
+			{
+				return FrameSynchronization{
+					.acquireNextImage = [&] {
+						const auto CreateInfo = vk::SemaphoreCreateInfo{};
+						return Device.createSemaphore(CreateInfo);
+					}(),
+					.prePresent = [&] {
+						const auto CreateInfo = vk::SemaphoreCreateInfo{};
+						return Device.createSemaphore(CreateInfo);
+					}(),
+					.timeline = [&] {
+						const auto typeCreateInfo = vk::SemaphoreTypeCreateInfo{
+							.semaphoreType = vk::SemaphoreType::eTimeline,
+							.initialValue = 0,
+						};
+
+						const auto CreateInfo = vk::SemaphoreCreateInfo{ .pNext = &typeCreateInfo };
+						return Device.createSemaphore(CreateInfo);
+					}(),
+					.present = [&] {
+						const auto CreateInfo = vk::FenceCreateInfo{ .flags = vk::FenceCreateFlagBits::eSignaled };
+						return Device.createFence(CreateInfo);
+					}(),
+				};
 			};
 
-			// TODO
-			//vku::small::vector<FrameSynchronization, MAX_PENDING_FRAMES> Result;
+		// TODO: rewrite without temp container usage std::ranges::generate_n
+		// TODO: https://en.cppreference.com/w/cpp/container/inplace_vector.html
+		//return std::views::iota(0u, MAX_PENDING_FRAMES)
+		//	| std::views::transform([&](auto) { return generateFunc(); })
+		//	| std::ranges::to<vku::small::vector<FrameSynchronization, MAX_PENDING_FRAMES>>();
 
-			std::vector<FrameSynchronization> Result;
-			Result.reserve(MAX_PENDING_FRAMES);
+		std::generate_n(std::back_inserter(Result), MAX_PENDING_FRAMES, generateFunc);
 
-			const auto generateFunc = [&]
-				{
-					return FrameSynchronization{
-						.acquireNextImage = [&] {
-							const auto CreateInfo = vk::SemaphoreCreateInfo{};
-							return Device.createSemaphore(CreateInfo);
-						}(),
-						.prePresent = [&] {
-							const auto CreateInfo = vk::SemaphoreCreateInfo{};
-							return Device.createSemaphore(CreateInfo);
-						}(),
-						.timeline = [&] {
-							const auto typeCreateInfo = vk::SemaphoreTypeCreateInfo{
-								.semaphoreType = vk::SemaphoreType::eTimeline,
-								.initialValue = 0,
-							};
-
-							const auto CreateInfo = vk::SemaphoreCreateInfo{ .pNext = &typeCreateInfo };
-							return Device.createSemaphore(CreateInfo);
-						}(),
-						.present = [&] {
-							const auto CreateInfo = vk::FenceCreateInfo{ .flags = vk::FenceCreateFlagBits::eSignaled };
-							return Device.createFence(CreateInfo);
-						}(),
-					};
-				};
-
-			// TODO: rewrite without temp container usage std::ranges::generate_n
-			// TODO: https://en.cppreference.com/w/cpp/container/inplace_vector.html
-			//return std::views::iota(0u, MAX_PENDING_FRAMES)
-			//	| std::views::transform([&](auto) { return generateFunc(); })
-			//	| std::ranges::to<vku::small::vector<FrameSynchronization, MAX_PENDING_FRAMES>>();
-
-			std::generate_n(std::back_inserter(Result), MAX_PENDING_FRAMES, generateFunc);
-
-			return Result;
-		}();
+		return Result;
+	}();
 
 	const auto graphicsCommandPool = [&] {
 		const auto CreateInfo = vk::CommandPoolCreateInfo{
@@ -582,6 +647,7 @@ void RenderThreadFunc(
 			.transferCommandBuffer = transferCommandBuffer,
 			.transferQueue = TransferQueue,
 			.surfaceFormat = SurfaceFormat.format,
+			.depthFormat = depthFormat,
 		};
 
 		return gltf::Loader(createInfo);
@@ -589,7 +655,7 @@ void RenderThreadFunc(
 
 	const auto gltfModel = gltfLoader.loadFromFile(config.gltfFile);
 
-	float dolly = 5.0f;                          // distance from center
+	float dolly = 0.15f;                          // distance from center
 	float azimuth = 0.0f;                        // horizontal angle (radians)
 	float altitude = glm::radians(30.0f);        // vertical angle (radians)
 	float spinSpeed = glm::radians(45.0f);       // radians per second
@@ -637,7 +703,7 @@ void RenderThreadFunc(
 			.layerCount = 1,
 		};
 
-		const auto& swapchainImage = swapChainImages[NextImage];
+		const auto& swapchainImage = swapchainImages[NextImage];
 		// render
 		{
 			const auto& commandBuffer = graphicsCommandBuffers[frameIndex];
@@ -647,48 +713,70 @@ void RenderThreadFunc(
 			{
 				commandBuffer.begin({ .flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit });
 
-				// to VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
 				{
-					const auto toAttachmentBarrier = vk::ImageMemoryBarrier2{
-						.srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-						.dstStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-						.dstAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite,
-						.oldLayout = vk::ImageLayout::eUndefined,
-						.newLayout = vk::ImageLayout::eColorAttachmentOptimal,
-						.srcQueueFamilyIndex = vk::QueueFamilyIgnored,
-						.dstQueueFamilyIndex = vk::QueueFamilyIgnored,
-						.image = swapchainImage,
-						.subresourceRange = COLOR_SUBRESOURCE_RANGE,
+					const auto imageMemoryBarriers = {
+						// to VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
+						vk::ImageMemoryBarrier2{
+							//.srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput, // TODO: ?
+							.dstStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+							.dstAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite,
+							.newLayout = vk::ImageLayout::eColorAttachmentOptimal,
+							.srcQueueFamilyIndex = vk::QueueFamilyIgnored,
+							.dstQueueFamilyIndex = vk::QueueFamilyIgnored,
+							.image = swapchainImage,
+							.subresourceRange = COLOR_SUBRESOURCE_RANGE,
+						},
+						// to VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
+						vk::ImageMemoryBarrier2{
+							.dstStageMask = vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests,
+							.dstAccessMask = vk::AccessFlagBits2::eDepthStencilAttachmentRead | vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
+							.newLayout = vk::ImageLayout::eDepthAttachmentOptimal,
+							.srcQueueFamilyIndex = vk::QueueFamilyIgnored,
+							.dstQueueFamilyIndex = vk::QueueFamilyIgnored,
+							.image = *depthImage,
+							.subresourceRange = {
+								.aspectMask = vk::ImageAspectFlagBits::eDepth,
+								.levelCount = 1,
+								.layerCount = 1,
+							},
+						},
 					};
 
-					const auto dependencyInfo = vk::DependencyInfo{}.setImageMemoryBarriers(toAttachmentBarrier);
+					const auto dependencyInfo = vk::DependencyInfo{}.setImageMemoryBarriers(imageMemoryBarriers);
 					commandBuffer.pipelineBarrier2(dependencyInfo);
 				}
 
-				const auto colorAttachments = {
-					vk::RenderingAttachmentInfo{
-						.imageView = swapChainImageViews[NextImage],
-						.imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
-						.loadOp = vk::AttachmentLoadOp::eClear,
-						.storeOp = vk::AttachmentStoreOp::eStore,
-						.clearValue = { .color = std::to_array({0.1f, 0.1f, 0.1f, 1.0f}) },
-					},
+				const auto colorAttachment = vk::RenderingAttachmentInfo{
+					.imageView = swapchainImageViews[NextImage],
+					.imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
+					.loadOp = vk::AttachmentLoadOp::eClear,
+					.storeOp = vk::AttachmentStoreOp::eStore,
+					.clearValue = { .color = std::to_array({0.1f, 0.1f, 0.1f, 1.0f}) },
+				};
+
+				const auto depthAttachment = vk::RenderingAttachmentInfo{
+					.imageView = *depthImageView,
+					.imageLayout = vk::ImageLayout::eDepthAttachmentOptimal,
+					.loadOp = vk::AttachmentLoadOp::eClear,
+					.storeOp = vk::AttachmentStoreOp::eStore,
+					.clearValue = {.depthStencil = { .depth = 1.0f } },
 				};
 
 				const auto renderingInfo = vk::RenderingInfo{
 					.renderArea = vk::Rect2D{ .extent = surfaceExtent },
 					.layerCount = 1,
-				}.setColorAttachments(colorAttachments);
+					.pDepthAttachment = &depthAttachment,
+				}.setColorAttachments(colorAttachment);
 
 				commandBuffer.beginRendering(renderingInfo);
 
-				// TODO: temp solution, rework
+				// TODO: temp solution, rework == add input
 				const auto createViewProj = [&]
 				{
 					azimuth += spinSpeed * frameTimer.getDeltaTime();
 
 					// view matrix
-					constexpr auto target = glm::vec3(0.0f, 0.0f, 0.0f);
+					constexpr auto target = glm::vec3(0);
 					constexpr auto up = glm::vec3(0.0f, 1.0f, 0.0f);
 
 					const auto altitude_sin = glm::sin(altitude);
@@ -731,13 +819,11 @@ void RenderThreadFunc(
 					gltfModel.Draw(drawInfo);
 				}
 
-				
-
 				commandBuffer.endRendering();
 
 				// to VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
 				{
-					const auto toPresentBarrier = vk::ImageMemoryBarrier2{
+					const auto imageMemoryBarrier = vk::ImageMemoryBarrier2{
 						.srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
 						.srcAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite,
 						.oldLayout = vk::ImageLayout::eColorAttachmentOptimal,
@@ -748,7 +834,7 @@ void RenderThreadFunc(
 						.subresourceRange = COLOR_SUBRESOURCE_RANGE,
 					};
 
-					const auto dependencyInfo = vk::DependencyInfo{}.setImageMemoryBarriers(toPresentBarrier);
+					const auto dependencyInfo = vk::DependencyInfo{}.setImageMemoryBarriers(imageMemoryBarrier);
 					commandBuffer.pipelineBarrier2(dependencyInfo);
 				}
 
@@ -917,14 +1003,17 @@ int main(int argc, char* argv[])
 
 // TODO: depth buffer
 // TODO: swapchain recreation
+// TODO: slangc check flags for warnings
 // TODO: add IWYU
-// TODO: check VK_KHR_present_id
-// TODO: check VK_KHR_present_wait
 // TODO: add clang-format
 // TODO: add clang-tidy
+// TODO: check VK_KHR_present_id
+// TODO: check VK_KHR_present_wait
 // TODO: hot-reload shaders
 // TODO: add support for VK_EXT_shader_object
 // TODO: improve command line
 // TODO: replace vku::small with std::inplace_vector C++26
 // TODO: check glm intrinsics options
 // TODO: check vkAcquireNextImage2KHR
+// TODO: add support for gltf cameras
+// TODO: multisampling

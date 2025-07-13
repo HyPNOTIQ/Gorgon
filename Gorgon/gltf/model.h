@@ -17,31 +17,11 @@ public:
 	VmaBuffer vmaBuffer;
 };
 
-//class BufferView
-//{
-//public:
-//	const Buffer& buffer;
-//
-//	vk::DeviceSize byteOffset;
-//	vk::DeviceSize byteStride;
-//	vk::DeviceSize byteLength;
-//};
-//
-//class Accessor
-//{
-//public:
-//	const BufferView& bufferView;
-//	vk::DeviceSize byteOffset;
-//	vk::DeviceSize count;
-//	vk::DeviceSize elemSize;
-//};
-
 class Primitive
 {
 public:
 	struct DrawInfo
 	{
-		const glm::mat4& mvp;
 		const vk::raii::CommandBuffer& commandBuffer;
 		const vk::Extent2D& surfaceExtent;
 		vk::FrontFace frontFace;
@@ -70,7 +50,6 @@ public:
 
 	vk::PrimitiveTopology topology;
 	vk::Pipeline pipeline;
-	vk::PipelineLayout pipelineLayout;
 	uint32_t count;
 
 	struct IndexedData
@@ -91,7 +70,6 @@ class Mesh
 public:
 	struct DrawInfo
 	{
-		const glm::mat4& mvp;
 		const vk::raii::CommandBuffer& commandBuffer;
 		const vk::Extent2D& surfaceExtent;
 	};
@@ -115,6 +93,7 @@ public:
 	glm::mat4 transform;
 	OptionalRef<Mesh> mesh;
 	vk::FrontFace frontFace;
+	vk::PipelineLayout pipelineLayout;
 	std::vector<Node> children;
 };
 
