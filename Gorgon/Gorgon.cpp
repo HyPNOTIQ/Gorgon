@@ -1,5 +1,5 @@
-﻿#include "gltf_loader.h"
-#include "vma_raii.h"
+﻿#include "gltf/loader.h"
+#include "vk/vma.h"
 
 VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 
@@ -8,45 +8,69 @@ constexpr auto WIDTH = 1440u;
 constexpr auto HEIGHT = 900u;
 constexpr auto MAX_PENDING_FRAMES = 2u;
 
-#define VULKAN_CONFIGURATOR
-
 namespace vk
 {
-	template <typename T>
-	concept Chainable = requires(T t) {
-		{ t.pNext } -> std::convertible_to<const void*>;
-	};
 
-	template<typename... Ts>
-	concept AllChainable = (Chainable<Ts> && ...);
+template <typename T>
+concept Chainable = requires(T t) {
+	{ t.pNext } -> std::convertible_to<const void*>;
+};
 
-	template <AllChainable... ChainElements>
-	decltype(auto) createStructureChain(ChainElements&&... elems)
-	{
-		return vk::StructureChain<std::remove_cvref_t<ChainElements>...>(std::forward<ChainElements>(elems)...);
-	}
+template<typename... Ts>
+concept AllChainable = (Chainable<Ts> && ...);
 
-	const auto deviceExtensions = {
-		vk::KHRSwapchainExtensionName,
-		//vk::EXTVertexInputDynamicStateExtensionName,
-	};
+template <AllChainable... ChainElements>
+decltype(auto) createStructureChain(ChainElements&&... elems)
+{
+	return vk::StructureChain<std::remove_cvref_t<ChainElements>...>(std::forward<ChainElements>(elems)...);
+}
+
+const auto deviceExtensions = {
+	vk::KHRSwapchainExtensionName,
+	//vk::EXTVertexInputDynamicStateExtensionName,
+};
 
 #ifndef VULKAN_CONFIGURATOR
-	VKAPI_ATTR vk::Bool32 VKAPI_CALL DebugMessageFunc(
-		const vk::DebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
-		const vk::DebugUtilsMessageTypeFlagsEXT messageTypes,
-		const vk::DebugUtilsMessengerCallbackDataEXT* const pCallbackData,
-		void* /*pUserData*/)
+VKAPI_ATTR vk::Bool32 VKAPI_CALL DebugMessageFunc(
+	const vk::DebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
+	const vk::DebugUtilsMessageTypeFlagsEXT messageTypes,
+	const vk::DebugUtilsMessengerCallbackDataEXT* const pCallbackData,
+	void* /*pUserData*/)
+{
+	if (messageSeverity & vk::DebugUtilsMessageSeverityFlagBitsEXT::eError)
 	{
-		if (messageSeverity & vk::DebugUtilsMessageSeverityFlagBitsEXT::eError)
-		{
-			fmt::println(std::clog, "{}", pCallbackData->pMessage);
-		}
-
-		return VK_FALSE;
+		fmt::println(std::clog, "{}", pCallbackData->pMessage);
 	}
-#endif // !VULKAN_CONFIGURATOR
+
+	return VK_FALSE;
 }
+#endif // !VULKAN_CONFIGURATOR
+
+}
+
+class FrameTimer {
+public:
+	using clock = std::chrono::steady_clock;
+
+	FrameTimer() : frameNum(0), lastTime(clock::now()) {}
+
+	void update() {
+		auto now = clock::now();
+		std::chrono::duration<float> dt = now - lastTime;
+		lastTime = now;
+
+		deltaTime = dt.count(); // in seconds
+		frameNum++;
+	}
+
+	float getDeltaTime() const { return deltaTime; }
+	uint64_t getFrameNum() const { return frameNum; }
+
+private:
+	clock::time_point lastTime;
+	float deltaTime = 0.0f;
+	uint64_t frameNum;
+};
 
 // TODO
 struct RenderThreadConfig
@@ -83,13 +107,11 @@ static inline void SetDebugUtilsObjectName(
 #endif // !NDEBUG
 }
 
-constexpr auto VK_API_VERSION = VK_API_VERSION_1_4;
-
 void RenderThreadFunc(
 	const std::stop_token& stop_token,
 	const RenderThreadConfig& config)
 {
-#if defined(RENDERDOC_INCLUDE) && !defined(NDEBUG) && 0
+#if defined(USE_RENDER_DOC) && 0
 	static_assert(VK_API_VERSION < VK_API_VERSION_1_4, "Renderdoc does not support 1.4"); // https://github.com/baldurk/renderdoc/issues/3625
 	RENDERDOC_API_1_1_2* rdoc_api;
 
@@ -113,7 +135,7 @@ void RenderThreadFunc(
 #ifndef VULKAN_CONFIGURATOR
 	const auto DebugUtilsMessengerCreateInfo = vk::DebugUtilsMessengerCreateInfoEXT{
 		.messageSeverity = ~vk::DebugUtilsMessageSeverityFlagsEXT(),
-		.messageType = ~vk::DebugUtilsMessageTypeFlagsEXT() ^ vk::DebugUtilsMessageTypeFlagBitsEXT::eDeviceAddressBinding,
+		.messageType = ~vk::DebugUtilsMessageTypeFlagsEXT() ^ vk::DebugUtilsMessageTypeFlagBitsEXT::eDeviceAddressBinding, // TODO
 		.pfnUserCallback = vk::DebugMessageFunc,
 	};
 #endif // !VULKAN_CONFIGURATOR
@@ -282,12 +304,8 @@ void RenderThreadFunc(
 			},
 			vk::PhysicalDeviceVulkan14Features{
 			},
-			// check how to replace with core vulkan
 			vk::PhysicalDeviceSwapchainMaintenance1FeaturesEXT{
 				.swapchainMaintenance1 = true,
-			}, // todo
-			vk::PhysicalDeviceVertexInputDynamicStateFeaturesEXT{
-				//.vertexInputDynamicState = true,
 			}
 		);
 
@@ -297,46 +315,11 @@ void RenderThreadFunc(
 	VULKAN_HPP_DEFAULT_DISPATCHER.init(*Device);
 
 	const auto vma = [&] {
-		const auto vulkanFunctions = VmaVulkanFunctions{
-			.vkGetInstanceProcAddr = Instance.getDispatcher()->vkGetInstanceProcAddr,
-			.vkGetDeviceProcAddr = Device.getDispatcher()->vkGetDeviceProcAddr,
-			.vkGetPhysicalDeviceProperties = Instance.getDispatcher()->vkGetPhysicalDeviceProperties,
-			.vkGetPhysicalDeviceMemoryProperties = Instance.getDispatcher()->vkGetPhysicalDeviceMemoryProperties,
-			.vkAllocateMemory = Device.getDispatcher()->vkAllocateMemory,
-			.vkFreeMemory = Device.getDispatcher()->vkFreeMemory,
-			.vkMapMemory = Device.getDispatcher()->vkMapMemory,
-			.vkUnmapMemory = Device.getDispatcher()->vkUnmapMemory,
-			.vkFlushMappedMemoryRanges = Device.getDispatcher()->vkFlushMappedMemoryRanges,
-			.vkInvalidateMappedMemoryRanges = Device.getDispatcher()->vkInvalidateMappedMemoryRanges,
-			.vkBindBufferMemory = Device.getDispatcher()->vkBindBufferMemory,
-			.vkBindImageMemory = Device.getDispatcher()->vkBindImageMemory,
-			.vkGetBufferMemoryRequirements = Device.getDispatcher()->vkGetBufferMemoryRequirements,
-			.vkGetImageMemoryRequirements = Device.getDispatcher()->vkGetImageMemoryRequirements,
-			.vkCreateBuffer = Device.getDispatcher()->vkCreateBuffer,
-			.vkDestroyBuffer = Device.getDispatcher()->vkDestroyBuffer,
-			.vkCreateImage = Device.getDispatcher()->vkCreateImage,
-			.vkDestroyImage = Device.getDispatcher()->vkDestroyImage,
-			.vkCmdCopyBuffer = Device.getDispatcher()->vkCmdCopyBuffer,
-#if VMA_VULKAN_VERSION >= 1001000
-			.vkGetBufferMemoryRequirements2KHR = reinterpret_cast<PFN_vkGetBufferMemoryRequirements2>(Device.getDispatcher()->vkGetBufferMemoryRequirements2),
-			.vkGetImageMemoryRequirements2KHR = reinterpret_cast<PFN_vkGetImageMemoryRequirements2>(Device.getDispatcher()->vkGetImageMemoryRequirements2),
-			.vkBindBufferMemory2KHR = reinterpret_cast<PFN_vkBindBufferMemory2>(Device.getDispatcher()->vkBindBufferMemory2),
-			.vkBindImageMemory2KHR = reinterpret_cast<PFN_vkBindImageMemory2>(Device.getDispatcher()->vkBindImageMemory2),
-			.vkGetPhysicalDeviceMemoryProperties2KHR = reinterpret_cast<PFN_vkGetPhysicalDeviceMemoryProperties2>(Instance.getDispatcher()->vkGetPhysicalDeviceMemoryProperties2),
-#endif // VMA_VULKAN_VERSION >= 1001000
-#if VMA_VULKAN_VERSION >= 1003000
-			.vkGetDeviceBufferMemoryRequirements = Device.getDispatcher()->vkGetDeviceBufferMemoryRequirements,
-			.vkGetDeviceImageMemoryRequirements = Device.getDispatcher()->vkGetDeviceImageMemoryRequirements,
-#endif // VMA_VULKAN_VERSION >= 1003000
-		};
-
-		const auto createInfo = VmaAllocatorCreateInfo{
-			.flags = VMA_ALLOCATOR_CREATE_EXTERNALLY_SYNCHRONIZED_BIT,
-			.physicalDevice = *PhysicalDevice,
-			.device = *Device,
-			.pVulkanFunctions = &vulkanFunctions,
-			.instance = *Instance,
-			.vulkanApiVersion = VK_API_VERSION_1_3,
+		const auto createInfo = VulkanMemoryAllocator::CreateInfo
+		{
+			.instance = Instance,
+			.physicalDevice = PhysicalDevice,
+			.device = Device,
 		};
 
 		return VulkanMemoryAllocator(createInfo);
@@ -388,6 +371,7 @@ void RenderThreadFunc(
 		return maxImageCount ? std::min(DesiredMinImageCount, maxImageCount) : DesiredMinImageCount;
 	};
 
+	// TODO: check vk::SurfaceFormat2KHR
 	const auto surfaceExtent = [&] {
 		// https://registry.khronos.org/vulkan/specs/latest/man/html/VkSurfaceCapabilitiesKHR.html
 		// currentExtent is the current width and height of the surface, or the special value (0xFFFFFFFF, 0xFFFFFFFF) indicating
@@ -407,6 +391,7 @@ void RenderThreadFunc(
 			const auto& MinImageExtent = SurfaceCapabilities.minImageExtent;
 			const auto& MaxImageExtent = SurfaceCapabilities.maxImageExtent;
 
+			// TODO
 			return vk::Extent2D{
 				.width = std::clamp(actualExtent.height, MinImageExtent.height, MinImageExtent.height),
 				.height = std::clamp(actualExtent.width, MinImageExtent.width, MinImageExtent.width),
@@ -477,169 +462,6 @@ void RenderThreadFunc(
 			| std::views::transform(createImageViewL)
 			| std::ranges::to<std::vector>();
 	}();
-
-	const auto pipelineLayout = [&] {
-		const auto pushConstantRange = vk::PushConstantRange{
-			.stageFlags = vk::ShaderStageFlagBits::eVertex, // Make sure this includes vertex stage
-			.offset = 0,
-			.size = sizeof(glm::mat4),
-		};
-
-		const auto createInfo = vk::PipelineLayoutCreateInfo{}
-			.setPushConstantRanges(pushConstantRange);
-
-		return Device.createPipelineLayout(createInfo);
-	}();
-
-	const auto createShaderModule = [&](const std::filesystem::path& path) {
-		const auto loadSPIRV = [](const std::filesystem::path& path) {
-			auto file = std::ifstream(path, std::ios::binary | std::ios::ate);
-
-			if (!file) {
-				assert(false);
-			}
-
-			const auto size = file.tellg();
-			file.seekg(0, std::ios::beg);
-
-			if (size % sizeof(uint32_t) != 0) {
-				assert(false);
-			}
-
-			std::vector<uint32_t> buffer(size / sizeof(uint32_t));
-			if (!file.read(reinterpret_cast<char*>(buffer.data()), size)) {
-				assert(false);
-			}
-
-			constexpr auto SPIRV_MAGIC = static_cast<uint32_t>(0x07230203);
-			if (buffer.empty() || buffer[0] != SPIRV_MAGIC) {
-				assert(false && "Invalid SPIR-V magic number.");
-			}
-
-			return buffer;
-			};
-
-		const auto code = loadSPIRV(path);
-
-		const auto createInfo = vk::ShaderModuleCreateInfo{
-		}.setCode(code);
-
-		return Device.createShaderModule(createInfo);
-		};
-
-	// TODO: add support for VK_EXT_shader_object
-	const auto combindedShaderModule = createShaderModule("shaders/combined.spv");
-
-	const auto graphicaPipeline = [&] {
-		struct Vertex
-		{
-			glm::vec3 pos;
-		};
-
-		// Vertex input state
-		const auto vertexBindingDescriptions = {
-			vk::VertexInputBindingDescription{
-				.binding = 0,
-				.stride = sizeof(Vertex),
-				.inputRate = vk::VertexInputRate::eVertex,
-			},
-		};
-
-		const auto attributeDescriptions = {
-			vk::VertexInputAttributeDescription{
-				.location = 0,
-				.binding = 0,
-				.format = vk::Format::eR32G32B32Sfloat,
-				.offset = offsetof(Vertex, pos),
-			},
-		};
-
-		const auto vertexInputState = vk::PipelineVertexInputStateCreateInfo{}
-			.setVertexBindingDescriptions(vertexBindingDescriptions)
-			.setVertexAttributeDescriptions(attributeDescriptions);
-
-		// Input assembly
-		const auto inputAssemblyState = vk::PipelineInputAssemblyStateCreateInfo{
-			.topology = vk::PrimitiveTopology::eTriangleList,
-			.primitiveRestartEnable = false
-		};
-
-		// https://www.saschawillems.de/blog/2019/03/29/flipping-the-vulkan-viewport/
-		const auto viewport = vk::Viewport{
-			.y = float(surfaceExtent.height),
-			.width = float(surfaceExtent.width),
-			.height = -float(surfaceExtent.height),
-			.maxDepth = 1,
-		};
-
-		const auto scissor = vk::Rect2D{ .extent = surfaceExtent };
-
-		// Viewport state
-		const auto viewportState = vk::PipelineViewportStateCreateInfo{}
-			.setViewports(viewport)
-			.setScissors(scissor);
-
-		// Rasterization State
-		const auto rasterizationState = vk::PipelineRasterizationStateCreateInfo{
-			.polygonMode = vk::PolygonMode::eLine,
-			.cullMode = vk::CullModeFlagBits::eNone, // TODO: https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#instantiation
-			.frontFace = vk::FrontFace::eClockwise,
-			.lineWidth = 1.0f,
-		};
-
-		// Multisample state
-		const auto multisampleState = vk::PipelineMultisampleStateCreateInfo{
-			.rasterizationSamples = vk::SampleCountFlagBits::e1,
-			.minSampleShading = 1.0f,
-		};
-
-		// Color blend state
-		const auto colorBlendAttachmentState = vk::PipelineColorBlendAttachmentState{
-			.colorWriteMask = ~vk::ColorComponentFlags(),
-		};
-
-		const auto colorBlendState = vk::PipelineColorBlendStateCreateInfo{
-		}.setAttachments(colorBlendAttachmentState);
-
-		// Dynamic state
-		const auto dynamicStates = {
-			vk::DynamicState::ePrimitiveTopology,
-			vk::DynamicState::eVertexInputBindingStride,
-		};
-
-		const auto dynamicState = vk::PipelineDynamicStateCreateInfo{}.setDynamicStates(dynamicStates);
-
-		// Stages
-		const auto stages = {
-			vk::PipelineShaderStageCreateInfo{
-				.stage = vk::ShaderStageFlagBits::eFragment,
-				.module = combindedShaderModule,
-				.pName = "main",
-			},
-			vk::PipelineShaderStageCreateInfo{
-				.stage = vk::ShaderStageFlagBits::eVertex,
-				.module = combindedShaderModule,
-				.pName = "main",
-			},
-		};
-
-		const auto pipelineRendering = vk::PipelineRenderingCreateInfo{}
-			.setColorAttachmentFormats(SurfaceFormat.format);
-
-		const auto createInfo = vk::GraphicsPipelineCreateInfo{
-			.pNext = &pipelineRendering,
-			.pVertexInputState = &vertexInputState,
-			.pInputAssemblyState = &inputAssemblyState,
-			.pViewportState = &viewportState,
-			.pRasterizationState = &rasterizationState,
-			.pMultisampleState = &multisampleState,
-			.pColorBlendState = &colorBlendState,
-			.pDynamicState = &dynamicState,
-			.layout = *pipelineLayout,
-		}.setStages(stages);
-
-		return Device.createGraphicsPipeline(nullptr, createInfo);
-		}();
 
 	const auto frameSynchronizations = [&]
 		{
@@ -722,7 +544,7 @@ void RenderThreadFunc(
 		return Device.createCommandPool(CreateInfo);
 		}();
 
-	const auto renderCommandBuffers = [&] {
+	const auto graphicsCommandBuffers = [&] {
 		const auto CreateInfo = vk::CommandBufferAllocateInfo{
 			.commandPool = *graphicsCommandPool,
 			.level = vk::CommandBufferLevel::ePrimary,
@@ -752,28 +574,37 @@ void RenderThreadFunc(
 		return std::move(Device.allocateCommandBuffers(CreateInfo).front());
 	}();
 
-	const auto gltfModel = [&] {
-		const auto createInfo = GltfModel::CreateInfo{
-			.gltfFile = config.gltfFile,
-			.memoryAllocator = vma,
+	auto gltfLoader = [&] {
+		const auto createInfo = gltf::Loader::CreateInfo
+		{
+			.device = Device,
+			.vma = vma,
 			.transferCommandBuffer = transferCommandBuffer,
 			.transferQueue = TransferQueue,
-			.device = Device,
+			.surfaceFormat = SurfaceFormat.format,
 		};
-		return GltfModel(createInfo);
+
+		return gltf::Loader(createInfo);
 	}();
 
-	auto frameNumber = 0u;
+	const auto gltfModel = gltfLoader.loadFromFile(config.gltfFile);
+
+	float dolly = 5.0f;                          // distance from center
+	float azimuth = 0.0f;                        // horizontal angle (radians)
+	float altitude = glm::radians(30.0f);        // vertical angle (radians)
+	float spinSpeed = glm::radians(45.0f);       // radians per second
+
+	auto frameTimer = FrameTimer();
 	while (not stop_token.stop_requested())
-	//while (frameNumber < MAX_PENDING_FRAMES * 2)
 	{
 		//fmt::println(std::clog, "Render Thread");
+		const auto frameNumber = frameTimer.getFrameNum();
 		const auto frameIndex = frameNumber % MAX_PENDING_FRAMES;
 
 		enum FrameTimeline : uint64_t {
 			eRender = 1,
 			ePrePresent,
-			eMax = ePrePresent
+			eMax = ePrePresent // TODO: use constexpr magic_enum
 		};
 
 		const auto getTimelineValue = [&](const FrameTimeline timelineValue) {
@@ -784,10 +615,9 @@ void RenderThreadFunc(
 
 		// TODO handle result value
 		{
-			const auto result = Device.waitForFences({ *frameSynchronization.present }, true, UINT64_MAX_VALUE);
+			const auto result = Device.waitForFences(*frameSynchronization.present , true, UINT64_MAX_VALUE);
 			assert(result == vk::Result::eSuccess);
-
-			Device.resetFences({ *frameSynchronization.present });
+			Device.resetFences(*frameSynchronization.present);
 		}
 
 		const auto NextImage = [&] {
@@ -810,7 +640,7 @@ void RenderThreadFunc(
 		const auto& swapchainImage = swapChainImages[NextImage];
 		// render
 		{
-			const auto& commandBuffer = renderCommandBuffers[frameIndex];
+			const auto& commandBuffer = graphicsCommandBuffers[frameIndex];
 			commandBuffer.reset();
 
 			// record command buffer
@@ -846,22 +676,31 @@ void RenderThreadFunc(
 				};
 
 				const auto renderingInfo = vk::RenderingInfo{
-					.renderArea = vk::Rect2D{.extent = surfaceExtent },
+					.renderArea = vk::Rect2D{ .extent = surfaceExtent },
 					.layerCount = 1,
 				}.setColorAttachments(colorAttachments);
 
 				commandBuffer.beginRendering(renderingInfo);
 
-				commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *graphicaPipeline);
-
 				// TODO: temp solution, rework
 				const auto createViewProj = [&]
 				{
+					azimuth += spinSpeed * frameTimer.getDeltaTime();
+
 					// view matrix
 					constexpr auto target = glm::vec3(0.0f, 0.0f, 0.0f);
 					constexpr auto up = glm::vec3(0.0f, 1.0f, 0.0f);
 
-					constexpr auto position = glm::vec3(0.0f, 0.0f, 5.0f); // TODO: use dolly, azimuth, altitude
+					const auto altitude_sin = glm::sin(altitude);
+					const auto altitude_cos = glm::cos(altitude);
+					const auto azimuth_sin = glm::sin(azimuth);
+					const auto azimuth_cos = glm::cos(azimuth);
+
+					const auto x = dolly * altitude_cos * azimuth_sin;
+					const auto y = dolly * altitude_sin;
+					const auto z = dolly * altitude_cos * azimuth_cos;
+
+					const auto position = glm::vec3(x, y, z);
 
 					const auto view = glm::lookAt(position, target, up);
 
@@ -869,8 +708,8 @@ void RenderThreadFunc(
 					const auto width = static_cast<float>(surfaceExtent.width);
 					const auto height = static_cast<float>(surfaceExtent.height);
 					constexpr float fovY = glm::radians(45.0f);
-					const float aspect = width / height;  // width and height of the viewport
-					constexpr float nearPlane = 0.1f;
+					const float aspect = width / height;
+					constexpr float nearPlane = 0.01f;
 					constexpr float farPlane = 100.0f;
 
 					const auto proj = glm::perspective(fovY, aspect, nearPlane, farPlane);
@@ -880,14 +719,19 @@ void RenderThreadFunc(
 
 				const auto viewProj = createViewProj();
 
-				const auto gltfModelDrawInfo = GltfModel::DrawInfo{
-					.sceneIndex = 0,
-					.viewProj = viewProj,
-					.commandBuffer = commandBuffer,
-					.pipelineLayout = pipelineLayout,
-				};
+				{
+					const auto drawInfo = gltf::Model::DrawInfo
+					{
+						.sceneIndex = 0, // TODO
+						.viewProj = viewProj,
+						.commandBuffer = commandBuffer,
+						.surfaceExtent = surfaceExtent,
+					};
 
-				gltfModel.Draw(gltfModelDrawInfo);
+					gltfModel.Draw(drawInfo);
+				}
+
+				
 
 				commandBuffer.endRendering();
 
@@ -1003,14 +847,14 @@ void RenderThreadFunc(
 			}
 		}
 
-		++frameNumber;
+		frameTimer.update();
 	}
 
 	// wait for present fences before shutdown
 	{
 		const auto fences = frameSynchronizations
 			| std::views::transform([](const auto& frameSynchronization) { return *frameSynchronization.present; })
-			| std::ranges::to<vku::small::vector<vk::Fence, MAX_PENDING_FRAMES>>(); // TODO: use std::inplace_vector C++26
+			| std::ranges::to<vku::small::vector<vk::Fence, MAX_PENDING_FRAMES>>();
 
 		const auto result = Device.waitForFences(fences, true, UINT64_MAX_VALUE);
 		assert(result == vk::Result::eSuccess);
@@ -1071,11 +915,16 @@ int main(int argc, char* argv[])
 	return EXIT_SUCCESS;
 }
 
+// TODO: depth buffer
+// TODO: swapchain recreation
 // TODO: add IWYU
 // TODO: check VK_KHR_present_id
 // TODO: check VK_KHR_present_wait
 // TODO: add clang-format
 // TODO: add clang-tidy
-// TODO: swapchain recreation
 // TODO: hot-reload shaders
-// TODO: remove cgltf
+// TODO: add support for VK_EXT_shader_object
+// TODO: improve command line
+// TODO: replace vku::small with std::inplace_vector C++26
+// TODO: check glm intrinsics options
+// TODO: check vkAcquireNextImage2KHR

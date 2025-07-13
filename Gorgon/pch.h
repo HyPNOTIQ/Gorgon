@@ -1,40 +1,39 @@
 #pragma once
 
-//#include <vulkan/vulkan.h>
 
-#include <fmt/ostream.h>
+// std
 #include <iostream>
 #include <thread>
 #include <filesystem>
 #include <atomic>
+#include <unordered_map>
 #include <ranges>
+
+// third party
 #include <gsl/gsl>
 #include <CLI/CLI.hpp>
+#include <fmt/ostream.h>
 #include <tiny_gltf.h>
 #include <vk_mem_alloc.h>
 #include <vulkan/vulkan_raii.hpp>
 #include <vulkan/utility/vk_small_containers.hpp>
 #include <glm/glm.hpp>
 #include <glm/gtc/type_ptr.hpp>
-
-//#define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
-//#ifndef NOMINMAX
-//#define NOMINMAX
-//#include <dylib.hpp>
-//#endif // !NOMINMAX
-
-#ifdef RENDERDOC_INCLUDE
+#if defined(RENDERDOC_INCLUDE) && !defined(NDEBUG)
 #include <renderdoc_app.h>
-#endif // RENDERDOC_INCLUDE
+#define USE_RENDER_DOC
+#endif
+
+template<typename T>
+using OptionalRef = std::optional<std::reference_wrapper<T>>;
+
+#define VULKAN_CONFIGURATOR
+constexpr auto VK_API_VERSION = VK_API_VERSION_1_4;
+constexpr auto VERTEX_INPUT_NUM = 7u;
 
 constexpr auto UINT64_MAX_VALUE = std::numeric_limits<uint64_t>::max();
+constexpr auto MAT4_IDENTITY = glm::identity<glm::mat4>();
+constexpr auto QUAT_IDENTITY = glm::identity<glm::quat>();
 
-#ifdef near
-#undef near
-#endif // near
-
-#ifdef far
-#undef far
-#endif // far

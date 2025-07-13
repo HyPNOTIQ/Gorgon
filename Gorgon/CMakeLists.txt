@@ -2,7 +2,8 @@
 # project specific logic here.
 #
 
-add_executable (Gorgon "Gorgon.cpp" "pch.h" "gltf_loader.h" "gltf_loader.cpp" "vma_raii.h" "vma_raii.cpp")
+add_executable (Gorgon "Gorgon.cpp" "pch.h" "gltf/model.cpp" "gltf/model.h" "gltf/loader.h" "gltf/loader_tinygltf.cpp" "gltf/loader.cpp" "vk/vma.cpp" "vk/vma.h")
+
 target_precompile_headers(Gorgon PRIVATE "pch.h")
 
 target_compile_definitions(Gorgon PRIVATE
@@ -12,8 +13,11 @@ target_compile_definitions(Gorgon PRIVATE
 	GLM_FORCE_DEPTH_ZERO_TO_ONE 
 )
 
-# TODO
-target_include_directories(Gorgon PRIVATE "$ENV{VULKAN_SDK}/Include")
+
+target_include_directories(Gorgon PRIVATE
+	$ENV{VULKAN_SDK}/Include # TODO why it's needed if we have vulkan-hpp?
+	${CMAKE_CURRENT_SOURCE_DIR}
+)
 #target_include_directories(Gorgon PRIVATE "$<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/third_party/cgltf>") // TODO: check what is BUILD_INTERFACE
 
 if (DEFINED ENV{RENDERDOC_INCLUDE}) 
