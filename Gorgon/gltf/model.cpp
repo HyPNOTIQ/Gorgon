@@ -6,7 +6,7 @@ namespace gltf
 
 void Primitive::Draw(const DrawInfo& info) const
 {
-	// TODO: handle case when no POSITION
+	// TODO: handle no POSITION case 
 
 	const auto& commandBuffer = info.commandBuffer;
 
@@ -95,8 +95,8 @@ void Node::Draw(const DrawInfo& info) const
 		};
 
 		const auto pushConstantsInfo = vk::PushConstantsInfo{
-			.layout = pipelineLayout,
-			.stageFlags = vk::ShaderStageFlagBits::eVertex,
+			.layout = info.pipelineLayout,
+			.stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment,
 			.offset = 0,
 			.size = sizeof(pushConstants),
 			.pValues = &pushConstants,
@@ -123,6 +123,7 @@ void Scene::Draw(const DrawInfo& info) const
 		.viewProj = info.viewProj,
 		.commandBuffer = info.commandBuffer,
 		.surfaceExtent = info.surfaceExtent,
+		.pipelineLayout = info.pipelineLayout,
 	};
 
 	std::ranges::for_each(nodes, [&](const Node& node) { node.Draw(nodeDrawInfo); });
@@ -130,6 +131,13 @@ void Scene::Draw(const DrawInfo& info) const
 
 void Model::Draw(const DrawInfo& info) const
 {
+	const auto bindDescriptorSetsInfo = vk::BindDescriptorSetsInfo{
+		.stageFlags = vk::ShaderStageFlagBits::eFragment,
+		.layout = data.pipelineLayout,
+	}.setDescriptorSets(data.descriptorSets);
+
+	info.commandBuffer.bindDescriptorSets2(bindDescriptorSetsInfo);
+
 	const auto sceneIndex = info.sceneIndex;
 	const auto& scenes = data.scenes;
 
@@ -141,9 +149,15 @@ void Model::Draw(const DrawInfo& info) const
 		.viewProj = info.viewProj,
 		.commandBuffer = info.commandBuffer,
 		.surfaceExtent = info.surfaceExtent,
+		.pipelineLayout = data.pipelineLayout,
 	};
 
 	scene.Draw(sceneDrawInfo);
+}
+
+Model::~Model()
+{
+	(*data.device).freeDescriptorSets(data.descriptorPool, data.descriptorSets);
 }
 
 }

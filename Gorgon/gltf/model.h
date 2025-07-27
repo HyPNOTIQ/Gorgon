@@ -4,16 +4,37 @@
 namespace gltf
 {
 
+class Sampler
+{
+public:
+	vk::raii::Sampler sampler;
+};
+
+class Texture
+{
+public:
+	VmaImage image;
+	vk::raii::ImageView imageView;
+	vk::Sampler sampler;
+	uint32_t uv;
+};
+
+class Material
+{
+public:
+	std::optional<Texture> baseColorTexture;
+	std::optional<Texture> metallicRoughnessTexture;
+	std::optional<Texture> emissiveTexture;
+
+	// TODO
+	//struct Params {
+	//	uint32_t baseColorUV = 0;
+	//} params;
+};
+
 class Buffer
 {
 public:
-	Buffer(const Buffer&) = delete;
-	Buffer(VmaBuffer&& vmaBuffer) : vmaBuffer(std::move(vmaBuffer)) {}
-	Buffer(Buffer&& rhs) noexcept = default;
-	Buffer& operator=(const Buffer&) = delete;
-	Buffer& operator=(Buffer&& rhs) noexcept = default;
-
-//private:
 	VmaBuffer vmaBuffer;
 };
 
@@ -87,13 +108,14 @@ public:
 		const glm::mat4& viewProj;
 		const vk::raii::CommandBuffer& commandBuffer;
 		const vk::Extent2D& surfaceExtent;
+		vk::PipelineLayout pipelineLayout;
 	};
 
 	void Draw(const DrawInfo& drawInfo) const;
 	glm::mat4 transform;
 	OptionalRef<Mesh> mesh;
 	vk::FrontFace frontFace;
-	vk::PipelineLayout pipelineLayout;
+	
 	std::vector<Node> children;
 };
 
@@ -105,16 +127,21 @@ public:
 		const glm::mat4& viewProj;
 		const vk::raii::CommandBuffer& commandBuffer;
 		const vk::Extent2D& surfaceExtent;
+		vk::PipelineLayout pipelineLayout;
 	};
 
+	std::vector<Node> nodes;
+private:
 	void Draw(const DrawInfo& drawInfo) const;
 
-	std::vector<Node> nodes;
+	friend class Model;
 };
 
 class Model
 {
 public:
+	~Model();
+
 	struct DrawInfo
 	{
 		size_t sceneIndex;
@@ -131,6 +158,12 @@ private:
 		std::vector<Buffer> buffers;
 		std::vector<Mesh> meshes;
 		std::vector<Scene> scenes;
+		std::vector<Material> materials;
+		std::vector<Sampler> samplers;
+		vk::PipelineLayout pipelineLayout;
+		std::vector<vk::DescriptorSet> descriptorSets;
+		vk::DescriptorPool descriptorPool;
+		const vk::raii::Device& device;
 	};
 
 	Model(const Model&) = delete;

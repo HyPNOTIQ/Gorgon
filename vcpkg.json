@@ -1,0 +1,10 @@
+{
+  "dependencies": [
+    "boost-pfr",
+    "cli11",
+    "fmt",
+    "ms-gsl",
+    "tinygltf",
+    "glfw3"
+  ]
+}

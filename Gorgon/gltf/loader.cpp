@@ -9,12 +9,11 @@ Loader::Loader(const CreateInfo& info)
 	, vma(info.vma)
 	, transferCommandBuffer(info.transferCommandBuffer)
 	, transferQueue(info.transferQueue)
-	, pipelineLayout(createPipelineLayout(info.device))
+	, pipelineLayoutData(createPipelineLayoutData(info.device))
 	, shaderModule(createShaderModule(info.device))
 	, surfaceFormat(info.surfaceFormat)
 	, depthFormat(info.depthFormat)
-{
-}
+{}
 
 vk::Pipeline Loader::getPipeline(const PrimitivePipelineInfo& info)
 {
@@ -50,79 +49,79 @@ vk::Pipeline Loader::getPipeline(const PrimitivePipelineInfo& info)
 		} primitiveFlags;
 
 		// NORMAL
-		if (info.data.normal)
+
+		if (info.hasNormal)
 		{
 			addDescription(1, vk::Format::eR32G32B32Sfloat);
 			primitiveFlags.data.normal = 1;
 		}
 
 		// TANGENT
-		if (info.data.tangent)
+		if (info.hasTangent)
 		{
 			addDescription(2, vk::Format::eR32G32B32A32Sfloat);
 			primitiveFlags.data.tangent = 1;
 		}
 
-		// TEXCOORD_0
-		if (info.data.texcoord_0)
-		{
-			const auto format = [&]
-			{
-				vk::Format result;
-				switch (info.data.texcoord_0) {
-				case 1: result = vk::Format::eR32G32Sfloat; break;
-				case 2: result = vk::Format::eR8G8Unorm; break;
-				case 3: result = vk::Format::eR16G16Unorm; break;
-				default: assert(false);
-				}
+		const auto checkTexcoordFormat = [](const vk::Format val) {
+			const auto formats = {
+				vk::Format::eR32G32Sfloat,
+				vk::Format::eR8G8Unorm,
+				vk::Format::eR16G16Unorm,
+			};
 
-				return result;
-			}();
-			addDescription(3, format); // TODO: handle format
+			for (const auto format : formats) {
+				if (format == val)
+				{
+					return true;
+				}
+			}
+
+			return false;
+		};
+
+		// TEXCOORD_0
+		if (info.texcoord0)
+		{
+			const auto format = info.texcoord0.value();
+
+			assert(checkTexcoordFormat(format));
+
+			addDescription(3, format);
 			primitiveFlags.data.texcoord_0 = 1;
 		}
 
 		// TEXCOORD_1
-		if (info.data.texcoord_1)
+		if (info.texcoord1)
 		{
-			const auto format = [&]
-				{
-					vk::Format result;
-					switch (info.data.texcoord_0) {
-					case 1: result = vk::Format::eR32G32Sfloat; break;
-					case 2: result = vk::Format::eR8G8Unorm; break;
-					case 3: result = vk::Format::eR16G16Unorm; break;
-					default: assert(false);
-					}
+			const auto format = info.texcoord1.value();
 
-					return result;
-			}();
+			assert(checkTexcoordFormat(format));
 
-			addDescription(4, format); // TODO: handle format
+			addDescription(4, format);
 			primitiveFlags.data.texcoord_1 = 1;
 		}
 
 		// COLOR3_0
-		if (info.data.color_0)
+		if (info.color0)
 		{
-			const auto format = [&]
-			{
-				vk::Format result;
-				switch (info.data.color_0) {
-				case 1: result = vk::Format::eR32G32B32Sfloat; break;
-				case 2: result = vk::Format::eR8G8B8A8Unorm; break;
-				case 3: result = vk::Format::eR16G16B16A16Unorm; break;
-				case 4: result = vk::Format::eR32G32B32A32Sfloat; break;
-				case 5: result = vk::Format::eR8G8B8Unorm; break;
-				case 6: result = vk::Format::eR16G16B16Unorm; break;
-				default: assert(false);
-				}
+			const auto format = info.color0.value();
 
-				return result;
-			}();
-			addDescription(5, format);
-
-			primitiveFlags.data.color_0 = 1;
+			switch (format) {
+			case vk::Format::eR32G32B32Sfloat:
+			case vk::Format::eR8G8B8Unorm:
+			case vk::Format::eR16G16B16Unorm: 
+				addDescription(5, format);
+				primitiveFlags.data.color_0 = 1;
+				break;
+			case vk::Format::eR32G32B32A32Sfloat:
+			case vk::Format::eR8G8B8A8Unorm:
+			case vk::Format::eR16G16B16A16Unorm:
+				addDescription(6, format);
+				primitiveFlags.data.color_0 = 2;
+				break;
+			default: assert(false);
+			}
 		}
 
 		const auto vertexInputState = vk::PipelineVertexInputStateCreateInfo{}
@@ -192,7 +191,7 @@ vk::Pipeline Loader::getPipeline(const PrimitivePipelineInfo& info)
 			.dataSize = sizeof(primitiveFlags.packed),
 			.pData = &primitiveFlags.packed,
 		}.setMapEntries(SpecializationMapEntries);
-		//.setData(primitiveFlags.packed);
+		//.setData(primitiveFlags.packed); TODO:
 
 		const auto createPipelineShaderStageCreateInfo = [&](const vk::ShaderStageFlagBits stage) {
 			return vk::PipelineShaderStageCreateInfo{
@@ -222,15 +221,20 @@ vk::Pipeline Loader::getPipeline(const PrimitivePipelineInfo& info)
 			.pDepthStencilState = &depthStencilState,
 			.pColorBlendState = &colorBlendState,
 			.pDynamicState = &dynamicState,
-			.layout = *pipelineLayout,
+			.layout = *pipelineLayoutData.pipelineLayout,
 		}.setStages(stages);
 
 		return device.createGraphicsPipeline(nullptr, createInfo);
 	};
 
-	const auto it = pipelines.try_emplace(info.packed, createPipeline()).first;
-	const auto& result = it->second;
-	return *result;
+	auto it = pipelines.find(info);
+	if (it == pipelines.end()) {
+		const auto& [new_it, inserted] = pipelines.emplace(info, createPipeline());
+		assert(inserted);
+
+		return new_it->second;
+	}
+	return it->second;
 }
 
 vk::raii::ShaderModule Loader::createShaderModule(const vk::raii::Device& device)
@@ -271,16 +275,61 @@ vk::raii::ShaderModule Loader::createShaderModule(const vk::raii::Device& device
 	return device.createShaderModule(createInfo);
 }
 
-vk::raii::PipelineLayout Loader::createPipelineLayout(const vk::raii::Device& device)
+Loader::PipelineLayoutData Loader::createPipelineLayoutData(const vk::raii::Device& device)
 {
+	auto descriptorPool = [&] {
+		const auto poolSize = vk::DescriptorPoolSize{
+			.type = vk::DescriptorType::eCombinedImageSampler,
+			.descriptorCount = 256u, // TODO
+		};
+
+		const auto createInfo = vk::DescriptorPoolCreateInfo{
+			.flags = vk::DescriptorPoolCreateFlagBits::eUpdateAfterBind,
+			.maxSets = 256u, // TODO
+			.poolSizeCount = 256u, // TODO
+		}.setPoolSizes(poolSize);
+
+		return device.createDescriptorPool(createInfo);
+	}();
+
+	auto descriptorSetLayout = [&] {
+		const auto descriptorSetLayoutBindings = {
+			vk::DescriptorSetLayoutBinding{
+				.binding = 0,
+				.descriptorType = vk::DescriptorType::eCombinedImageSampler,
+				.descriptorCount = 256, // TODO
+				.stageFlags = vk::ShaderStageFlagBits::eFragment,
+			},
+		};
+
+		const auto flags = vk::DescriptorBindingFlagBits::ePartiallyBound
+			| vk::DescriptorBindingFlagBits::eVariableDescriptorCount
+			| vk::DescriptorBindingFlagBits::eUpdateAfterBind;
+
+		const auto flagsCreateInfo = vk::DescriptorSetLayoutBindingFlagsCreateInfo{}.setBindingFlags(flags);
+
+		const auto descriptorSetLayoutCreateInfo = vk::DescriptorSetLayoutCreateInfo{
+			.pNext = &flagsCreateInfo,
+			.flags = vk::DescriptorSetLayoutCreateFlagBits::eUpdateAfterBindPool,
+		}.setBindings(descriptorSetLayoutBindings);
+
+		return device.createDescriptorSetLayout(descriptorSetLayoutCreateInfo);
+	}();
+
 	constexpr auto pushConstantRange = vk::PushConstantRange{
-		.stageFlags = vk::ShaderStageFlagBits::eVertex,
+		.stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment,
 		.size = sizeof(PushConstants),
 	};
 
-	const auto createInfo = vk::PipelineLayoutCreateInfo{}.setPushConstantRanges(pushConstantRange);
+	const auto createInfo = vk::PipelineLayoutCreateInfo{}
+		.setSetLayouts(*descriptorSetLayout)
+		.setPushConstantRanges(pushConstantRange);
 
-	return device.createPipelineLayout(createInfo);
+	return PipelineLayoutData{
+		.pipelineLayout = device.createPipelineLayout(createInfo),
+		.descriptorPool = std::move(descriptorPool),
+		.descriptorSetLayout = std::move(descriptorSetLayout),
+	};
 }
 
 }

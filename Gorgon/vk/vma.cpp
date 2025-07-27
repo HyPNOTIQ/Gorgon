@@ -32,6 +32,14 @@ VmaImage::~VmaImage()
 	}
 }
 
+// TODO
+//vk::DeviceSize VmaImage::offset() const
+//{
+//	VmaAllocationInfo pAllocationInfo;
+//	vmaGetAllocationInfo(allocator, allocation, &pAllocationInfo);
+//	return pAllocationInfo.offset;
+//}
+
 vk::Image VmaImage::operator*() const
 {
 	return image;
@@ -208,6 +216,3 @@ VmaImage VulkanMemoryAllocator::createImage(
 
 	return VmaImage(image, allocation, allocator);
 }
-
-#define VMA_IMPLEMENTATION
-#include "vk_mem_alloc.h"

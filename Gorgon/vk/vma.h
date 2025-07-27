@@ -10,6 +10,7 @@ public:
 
 	~VmaImage();
 
+	//vk::DeviceSize offset() const;
 	vk::Image operator*() const;
 
 private:

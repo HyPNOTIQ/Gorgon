@@ -12,5 +12,5 @@ struct PrimitiveFlags {
     PrimitiveFlagsInt tangent : 1;
     PrimitiveFlagsInt texcoord_0 : 1;
     PrimitiveFlagsInt texcoord_1 : 1;
-    PrimitiveFlagsInt color_0 : 2;
+    PrimitiveFlagsInt color_0 : 2; // 1 - vec3, 2 - vec4
 };
