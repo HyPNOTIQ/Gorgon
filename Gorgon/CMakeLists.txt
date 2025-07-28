@@ -19,9 +19,9 @@ target_compile_definitions(Gorgon PRIVATE
 
 find_package(fmt CONFIG REQUIRED)
 find_package(boost_pfr CONFIG REQUIRED)
-find_package(Microsoft.GSL CONFIG REQUIRED)
 find_package(CLI11 CONFIG REQUIRED)
 find_package(glfw3 CONFIG REQUIRED)
+find_package(Boost REQUIRED COMPONENTS scope)
 
 find_path(TINYGLTF_INCLUDE_DIRS "tiny_gltf.h")
 target_include_directories(Gorgon PRIVATE ${TINYGLTF_INCLUDE_DIRS})
@@ -33,10 +33,10 @@ target_include_directories(Gorgon PRIVATE
 
 target_link_libraries(Gorgon PRIVATE
 	fmt::fmt
-	Microsoft.GSL::GSL
 	CLI11::CLI11
 	glfw
 	Boost::pfr
+	Boost::scope
 )
 
 if (DEFINED ENV{RENDERDOC_INCLUDE})

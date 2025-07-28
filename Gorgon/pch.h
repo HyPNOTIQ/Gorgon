@@ -10,7 +10,6 @@
 
 // third party
 #include <slang/slang.h>
-#include <gsl/gsl>
 #include <CLI/CLI.hpp>
 #include <fmt/ostream.h>
 #include <tiny_gltf.h>
@@ -21,6 +20,7 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <GLFW/glfw3.h>
 #include <boost/pfr.hpp>
+#include <boost/scope/scope_exit.hpp>
 
 #if defined(RENDERDOC_INCLUDE) && !defined(NDEBUG)
 #include <renderdoc_app.h>

@@ -668,4 +668,3 @@ Model Loader::loadFromFile(const std::string_view& gltfFile)
 }
 
 }
-

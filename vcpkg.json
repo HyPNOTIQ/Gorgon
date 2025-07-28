@@ -3,8 +3,8 @@
     "boost-pfr",
     "cli11",
     "fmt",
-    "ms-gsl",
+    "glfw3",
     "tinygltf",
-    "glfw3"
+    "boost-scope"
   ]
 }

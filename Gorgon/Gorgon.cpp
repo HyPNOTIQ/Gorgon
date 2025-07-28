@@ -334,8 +334,7 @@ void RenderThreadFunc(
 		return VulkanMemoryAllocator(createInfo);
 	}();
 
-	const auto DeviceIdleGuard = gsl::finally([&]
-											  { Device.waitIdle(); });
+	const auto DeviceIdleGuard = boost::scope::scope_exit([&] { Device.waitIdle(); });
 
 	const auto GraphicsQueue = Device.getQueue(queueFamilyIndices.Graphics, 0);
 	const auto PresentQueue = Device.getQueue(queueFamilyIndices.Present, 0);
@@ -977,7 +976,7 @@ int main(const int argc, const char *const *argv)
 		return EXIT_FAILURE;
 	}
 
-	const auto GlfwGuard = gsl::finally([] { glfwTerminate(); });
+	const auto GlfwGuard = boost::scope::scope_exit([] { glfwTerminate(); });
 
 	glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
 	glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
@@ -988,8 +987,7 @@ int main(const int argc, const char *const *argv)
 		return EXIT_FAILURE;
 	}
 
-	const auto GlfwWindowGuard = gsl::finally([&]
-											  { glfwDestroyWindow(Window); });
+	const auto GlfwWindowGuard = boost::scope::scope_exit([&] { glfwDestroyWindow(Window); });
 
 	const auto renderThreadConfig = RenderThreadConfig{
 		.gltfFile = gltfFile,
