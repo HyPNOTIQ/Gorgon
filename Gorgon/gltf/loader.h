@@ -52,9 +52,12 @@ public:
 	Loader(Loader&&) noexcept = default;
 
 private:
-	vk::Pipeline getPipeline(const PrimitivePipelineInfo& info);
+	vk::Sampler getSampler(const vk::SamplerCreateInfo& info);
+    std::unordered_map<vk::SamplerCreateInfo, vk::raii::Sampler> samplers;
 
+	vk::Pipeline getPipeline(const PrimitivePipelineInfo& info);
     std::unordered_map<PrimitivePipelineInfo, vk::raii::Pipeline> pipelines;
+
 	const vk::raii::Device& device;
 	const VulkanMemoryAllocator& vma;
 	const vk::raii::CommandBuffer& transferCommandBuffer;

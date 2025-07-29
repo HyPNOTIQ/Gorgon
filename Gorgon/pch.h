@@ -14,6 +14,7 @@
 #include <fmt/ostream.h>
 #include <tiny_gltf.h>
 #include <vulkan/vulkan_raii.hpp>
+#include <vulkan/vulkan_hash.hpp>
 #include <vulkan/utility/vk_small_containers.hpp>
 #include <vma/vk_mem_alloc.h>
 #include <glm/glm.hpp>

@@ -18,9 +18,9 @@ target_compile_definitions(Gorgon PRIVATE
 )
 
 find_package(fmt CONFIG REQUIRED)
-find_package(boost_pfr CONFIG REQUIRED)
 find_package(CLI11 CONFIG REQUIRED)
 find_package(glfw3 CONFIG REQUIRED)
+find_package(boost_pfr CONFIG REQUIRED)
 find_package(Boost REQUIRED COMPONENTS scope)
 find_package(Boost REQUIRED COMPONENTS container_hash)
 

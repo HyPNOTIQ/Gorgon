@@ -15,6 +15,18 @@ Loader::Loader(const CreateInfo& info)
 	, depthFormat(info.depthFormat)
 {}
 
+vk::Sampler Loader::getSampler(const vk::SamplerCreateInfo& info)
+{
+	auto it = samplers.find(info);
+	if (it == samplers.end()) {
+		const auto& [new_it, inserted] = samplers.emplace(info, device.createSampler(info));
+		assert(inserted);
+
+		return new_it->second;
+	}
+	return it->second;
+}
+
 vk::Pipeline Loader::getPipeline(const PrimitivePipelineInfo& info)
 {
 	const auto createPipeline = [&]

@@ -34,7 +34,7 @@ vk::DeviceSize getElemSize(const tinygltf::Accessor& accessor)
 	return tinygltf::GetComponentSizeInBytes(accessor.componentType) * tinygltf::GetNumComponentsInType(accessor.type);
 }
 
-inline std::optional<vk::Format> GltfToVkFormat(const tinygltf::Accessor& accessor) {
+std::optional<vk::Format> GltfToVkFormat(const tinygltf::Accessor& accessor) {
 	using Pair = std::pair<int, int>;
 	static const std::unordered_map<Pair, vk::Format> formatMap = {
 		{{TINYGLTF_TYPE_VEC2, TINYGLTF_COMPONENT_TYPE_FLOAT}, vk::Format::eR32G32Sfloat},
@@ -53,6 +53,74 @@ inline std::optional<vk::Format> GltfToVkFormat(const tinygltf::Accessor& access
 
 	assert(false);
 	return std::nullopt;
+}
+
+vk::SamplerCreateInfo GltfToVkSamplerInfo(const tinygltf::Sampler& sampler)
+{
+	const auto magFilter = [&] {
+		vk::Filter result;
+
+		switch (sampler.magFilter) {
+		case TINYGLTF_TEXTURE_FILTER_NEAREST: result = vk::Filter::eNearest; break;
+		case -1:
+		case TINYGLTF_TEXTURE_FILTER_LINEAR: result = vk::Filter::eLinear; break;
+		default: assert(false);
+		}
+
+		return result;
+	}();
+
+	const auto minFilter = [&] {
+		vk::Filter result;
+
+		switch (sampler.minFilter) {
+		case TINYGLTF_TEXTURE_FILTER_NEAREST_MIPMAP_NEAREST:
+		case TINYGLTF_TEXTURE_FILTER_NEAREST_MIPMAP_LINEAR:
+		case TINYGLTF_TEXTURE_FILTER_NEAREST: result = vk::Filter::eNearest; break;
+		case -1:
+		case TINYGLTF_TEXTURE_FILTER_LINEAR_MIPMAP_NEAREST:
+		case TINYGLTF_TEXTURE_FILTER_LINEAR_MIPMAP_LINEAR:
+		case TINYGLTF_TEXTURE_FILTER_LINEAR: result = vk::Filter::eLinear; break;
+		default: assert(false);
+		}
+
+		return result;
+	}();
+
+
+	const auto samplerAddressMode = [](const int wrap) {
+		vk::SamplerAddressMode result;
+
+		switch (wrap) {
+		case TINYGLTF_TEXTURE_WRAP_REPEAT: result = vk::SamplerAddressMode::eRepeat; break;
+		case TINYGLTF_TEXTURE_WRAP_CLAMP_TO_EDGE: result = vk::SamplerAddressMode::eClampToEdge; break;
+		case TINYGLTF_TEXTURE_WRAP_MIRRORED_REPEAT: result = vk::SamplerAddressMode::eMirroredRepeat; break;
+		default: assert(false);
+		}
+
+		return result;
+	};
+
+	return vk::SamplerCreateInfo{
+		.magFilter = magFilter,
+		.minFilter = minFilter,
+		.addressModeU = samplerAddressMode(sampler.wrapS),
+		.addressModeV = samplerAddressMode(sampler.wrapT),
+		//.anisotropyEnable = true, // TODO
+	};
+}
+
+vk::SamplerCreateInfo getDefaultSamplerInfo()
+{
+	static auto defaultSamplerInfo = vk::SamplerCreateInfo{
+		.magFilter = vk::Filter::eLinear,
+		.minFilter = vk::Filter::eLinear,
+		.addressModeU = vk::SamplerAddressMode::eRepeat,
+		.addressModeV = vk::SamplerAddressMode::eRepeat,
+		//.anisotropyEnable = true, // TODO
+	};
+
+	return defaultSamplerInfo;
 }
 
 }
@@ -149,81 +217,6 @@ Model Loader::loadFromFile(const std::string_view& gltfFile)
 
 	}();
 
-	// HACK
-	static auto defaultSampler = [&]() {
-		const auto createInfo = vk::SamplerCreateInfo{
-			.magFilter = vk::Filter::eLinear,
-			.minFilter = vk::Filter::eLinear,
-			.addressModeU = vk::SamplerAddressMode::eRepeat,
-			.addressModeV = vk::SamplerAddressMode::eRepeat,
-			//.anisotropyEnable = true, // TODO
-		};
-
-		return device.createSampler(createInfo);
-	}();
-
-	// TODO: move it into model and resuse on reload
-	const auto createSampler = [&](const tinygltf::Sampler& sampler) {
-		const auto magFilter = [&] {
-			vk::Filter result;
-
-			switch (sampler.magFilter) {
-			case TINYGLTF_TEXTURE_FILTER_NEAREST: result = vk::Filter::eNearest; break;
-			case -1:
-			case TINYGLTF_TEXTURE_FILTER_LINEAR: result = vk::Filter::eLinear; break;
-			default: assert(false);
-			}
-
-			return result;
-			}();
-
-		const auto minFilter = [&] {
-			vk::Filter result;
-
-			switch (sampler.minFilter) {
-			case TINYGLTF_TEXTURE_FILTER_NEAREST_MIPMAP_NEAREST:
-			case TINYGLTF_TEXTURE_FILTER_NEAREST_MIPMAP_LINEAR:
-			case TINYGLTF_TEXTURE_FILTER_NEAREST: result = vk::Filter::eNearest; break;
-			case -1:
-			case TINYGLTF_TEXTURE_FILTER_LINEAR_MIPMAP_NEAREST:
-			case TINYGLTF_TEXTURE_FILTER_LINEAR_MIPMAP_LINEAR:
-			case TINYGLTF_TEXTURE_FILTER_LINEAR: result = vk::Filter::eLinear; break;
-			default: assert(false);
-			}
-
-			return result;
-			}();
-
-
-		const auto samplerAddressMode = [](const int wrap) {
-			vk::SamplerAddressMode result;
-
-			switch (wrap) {
-			case TINYGLTF_TEXTURE_WRAP_REPEAT: result = vk::SamplerAddressMode::eRepeat; break;
-			case TINYGLTF_TEXTURE_WRAP_CLAMP_TO_EDGE: result = vk::SamplerAddressMode::eClampToEdge; break;
-			case TINYGLTF_TEXTURE_WRAP_MIRRORED_REPEAT: result = vk::SamplerAddressMode::eMirroredRepeat; break;
-			default: assert(false);
-			}
-
-			return result;
-			};
-
-		const auto createInfo = vk::SamplerCreateInfo{
-			.pNext = nullptr,
-			.magFilter = magFilter,
-			.minFilter = minFilter,
-			.addressModeU = samplerAddressMode(sampler.wrapS),
-			.addressModeV = samplerAddressMode(sampler.wrapT),
-			//.anisotropyEnable = true, // TODO
-		};
-
-		return Sampler{ .sampler = device.createSampler(createInfo) };
-		};
-
-	auto samplers = model.samplers
-		| std::views::transform([&](const auto& sampler) { return createSampler(sampler); })
-		| std::ranges::to<std::vector<Sampler>>();
-
 	auto materials = [&] {
 		const auto imageSize = [](const tinygltf::Image& image) {
 			return image.image.size() * sizeof(decltype(image.image)::value_type);
@@ -302,10 +295,14 @@ Model Loader::loadFromFile(const std::string_view& gltfFile)
 					return device.createImageView(createInfo);
 				}();
 
+				const auto SamplerInfo = texture.sampler != -1 ?
+					GltfToVkSamplerInfo(model.samplers[texture.sampler]) :
+					getDefaultSamplerInfo();
+
 				return Texture{
 					.image = std::move(vmaImage),
 					.imageView = std::move(imageView),
-					.sampler = texture.sampler == -1 ? *defaultSampler : *(samplers[texture.sampler].sampler),
+					.sampler = getSampler(SamplerInfo),
 					.uv = static_cast<uint32_t>(textureInfo.texCoord),
 				};
 			};
@@ -658,7 +655,6 @@ Model Loader::loadFromFile(const std::string_view& gltfFile)
 		.meshes = std::move(meshes),
 		.scenes = std::move(scenes),
 		.materials = std::move(materials),
-		.samplers = std::move(samplers),
 		.pipelineLayout = *pipelineLayoutData.pipelineLayout,
 		.descriptorSets = std::move(descriptorSets),
 		.device = device,

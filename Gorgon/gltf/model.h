@@ -159,7 +159,6 @@ private:
 		std::vector<Mesh> meshes;
 		std::vector<Scene> scenes;
 		std::vector<Material> materials;
-		std::vector<Sampler> samplers;
 		vk::PipelineLayout pipelineLayout;
 		std::vector<vk::DescriptorSet> descriptorSets;
 		vk::DescriptorPool descriptorPool;
