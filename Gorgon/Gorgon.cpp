@@ -1010,6 +1010,7 @@ int main(const int argc, const char *const *argv)
 	return EXIT_SUCCESS;
 }
 
+// TODO: rework transformations to Quaternion + Position
 // TODO: swapchain recreation
 // TODO: slangc check flags for warnings
 // TODO: slangc add shader optimization based on build config

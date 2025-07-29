@@ -22,6 +22,7 @@ find_package(boost_pfr CONFIG REQUIRED)
 find_package(CLI11 CONFIG REQUIRED)
 find_package(glfw3 CONFIG REQUIRED)
 find_package(Boost REQUIRED COMPONENTS scope)
+find_package(Boost REQUIRED COMPONENTS container_hash)
 
 find_path(TINYGLTF_INCLUDE_DIRS "tiny_gltf.h")
 target_include_directories(Gorgon PRIVATE ${TINYGLTF_INCLUDE_DIRS})
@@ -37,6 +38,7 @@ target_link_libraries(Gorgon PRIVATE
 	glfw
 	Boost::pfr
 	Boost::scope
+	Boost::container_hash
 )
 
 if (DEFINED ENV{RENDERDOC_INCLUDE})

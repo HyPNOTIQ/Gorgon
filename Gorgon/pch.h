@@ -21,6 +21,7 @@
 #include <GLFW/glfw3.h>
 #include <boost/pfr.hpp>
 #include <boost/scope/scope_exit.hpp>
+#include <boost/container_hash/hash.hpp>
 
 #if defined(RENDERDOC_INCLUDE) && !defined(NDEBUG)
 #include <renderdoc_app.h>
@@ -54,13 +55,10 @@ void operator|(const std::optional<T>& opt, Func&& func) {
 }
 
 namespace std {
-    template <typename T1, typename T2>
-    struct hash<std::pair<T1, T2>> {
-        size_t operator()(const std::pair<T1, T2>& p) const noexcept {
-            //return boost::pfr::hash_value(p);
-            size_t h1 = std::hash<T1>{}(p.first);
-            size_t h2 = std::hash<T2>{}(p.second);
-            return h1 ^ (h2 << 1); // simple combination
-        } // TODO: return boost::pfr::hash_fields(val);
-    };
+	template <typename T1, typename T2>
+	struct hash<std::pair<T1, T2>> {
+		size_t operator()(const std::pair<T1, T2>& p) const noexcept {
+			return boost::hash_value(p);
+		}
+	};
 }
