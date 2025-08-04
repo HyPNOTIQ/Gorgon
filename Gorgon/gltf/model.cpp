@@ -4,11 +4,20 @@
 namespace gltf
 {
 
+// TODO: handle no POSITION case 
 void Primitive::Draw(const DrawInfo& info) const
 {
-	// TODO: handle no POSITION case 
-
 	const auto& commandBuffer = info.commandBuffer;
+
+	const auto pushConstantsInfo = vk::PushConstantsInfo{
+		.layout = info.pipelineLayout,
+		.stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment,
+		.offset = offsetof(PushConstants, materialIndex),
+		.size = sizeof(PushConstants::materialIndex),
+		.pValues = &materialIndex,
+	};
+
+	commandBuffer.pushConstants2(pushConstantsInfo);
 
 	commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline);
 
@@ -81,6 +90,7 @@ void Mesh::Draw(const DrawInfo& info) const
 	const auto primitiveDrawInfo = Primitive::DrawInfo{
 		.commandBuffer = info.commandBuffer,
 		.surfaceExtent = info.surfaceExtent,
+		.pipelineLayout = info.pipelineLayout,
 	};
 
 	std::ranges::for_each(primitives, [&](const Primitive& primitive) { primitive.Draw(primitiveDrawInfo); });
@@ -90,16 +100,14 @@ void Node::Draw(const DrawInfo& info) const
 {
 	if (this->mesh)
 	{
-		const auto pushConstants = PushConstants{
-			.mvp = info.viewProj * transform,
-		};
+		const auto mvp = info.viewProj * transform;
 
 		const auto pushConstantsInfo = vk::PushConstantsInfo{
 			.layout = info.pipelineLayout,
 			.stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment,
-			.offset = 0,
-			.size = sizeof(pushConstants),
-			.pValues = &pushConstants,
+			.offset = offsetof(PushConstants, mvp),
+			.size = sizeof(PushConstants::mvp),
+			.pValues = &mvp,
 		};
 
 		info.commandBuffer.pushConstants2(pushConstantsInfo);
@@ -109,6 +117,7 @@ void Node::Draw(const DrawInfo& info) const
 		const auto meshDrawInfo = Mesh::DrawInfo{
 			.commandBuffer = info.commandBuffer,
 			.surfaceExtent = info.surfaceExtent,
+			.pipelineLayout = info.pipelineLayout,
 		};
 
 		mesh.Draw(meshDrawInfo);
@@ -157,7 +166,7 @@ void Model::Draw(const DrawInfo& info) const
 
 Model::~Model()
 {
-	(*data.device).freeDescriptorSets(data.descriptorPool, data.descriptorSets);
+	//(*data.device).freeDescriptorSets(data.descriptorPool, data.descriptorSets);
 }
 
 }

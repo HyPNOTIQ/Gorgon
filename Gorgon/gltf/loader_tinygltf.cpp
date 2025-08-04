@@ -35,8 +35,8 @@ vk::DeviceSize getElemSize(const tinygltf::Accessor& accessor)
 }
 
 std::optional<vk::Format> GltfToVkFormat(const tinygltf::Accessor& accessor) {
-	using Pair = std::pair<int, int>;
-	static const std::unordered_map<Pair, vk::Format> formatMap = {
+	using Key = std::pair<int, int>;
+	static const std::unordered_map<Key, vk::Format> formatMap = {
 		{{TINYGLTF_TYPE_VEC2, TINYGLTF_COMPONENT_TYPE_FLOAT}, vk::Format::eR32G32Sfloat},
 		{{TINYGLTF_TYPE_VEC2, TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE}, vk::Format::eR8G8Unorm},
 		{{TINYGLTF_TYPE_VEC2, TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT}, vk::Format::eR16G16Unorm},
@@ -49,7 +49,25 @@ std::optional<vk::Format> GltfToVkFormat(const tinygltf::Accessor& accessor) {
 	};
 
 	if (auto it = formatMap.find({ accessor.type, accessor.componentType }); it != formatMap.end())
+	{
 		return it->second;
+	}
+
+	assert(false);
+	return std::nullopt;
+}
+
+std::optional<vk::Format> GltfImageToVkFormat(const tinygltf::Image& image, const bool unorm) {
+	using Key = std::tuple<int, int, bool>;
+	static const std::unordered_map<Key, vk::Format> formatMap = {
+		{{4, 8, false}, vk::Format::eR8G8B8A8Srgb},
+		{{4, 8, true}, vk::Format::eR8G8B8A8Unorm},
+	};
+
+	if (auto it = formatMap.find({ image.component, image.bits, unorm }); it != formatMap.end())
+	{
+		return it->second;
+	}
 
 	assert(false);
 	return std::nullopt;
@@ -146,77 +164,140 @@ Model Loader::loadFromFile(const std::string_view& gltfFile)
 		assert(result);
 	}
 
-	// Buffers
-	// TODO: it sould be moved to loader.cpp with proper interface, so any loader can use it
-	auto buffers = [&]
-	{
-		const auto bufferSize = [](const tinygltf::Buffer& buffer)
-		{
-			return buffer.data.size() * sizeof(decltype(buffer.data)::value_type);
+	auto buffers = [&] {
+		const auto transform = [](const tinygltf::Buffer& buffer) {
+
+			const auto size = buffer.data.size() * sizeof(decltype(buffer.data)::value_type);
+			const auto data = reinterpret_cast<const std::byte*>(buffer.data.data());
+
+			return std::span<const std::byte>(data, size);
 		};
 
-		auto buffers = [&] {
-			const auto transform = [&](const tinygltf::Buffer& buffer) {
-				const auto size = bufferSize(buffer);
-
-				auto stagingBuffer = vma.createBuffer(
-					size,
-					vk::BufferUsageFlagBits::eTransferSrc,
-					VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT // TODO:  VMA_ALLOCATION_CREATE_MAPPED_BIT?
-				);
-
-				auto deviceBuffer = vma.createBuffer(
-					size,
-					vk::BufferUsageFlagBits::eVertexBuffer |
-					vk::BufferUsageFlagBits::eIndexBuffer |
-					vk::BufferUsageFlagBits::eTransferDst,
-					0 // TODO: VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT?  check VkMemoryDedicatedAllocateInfo
-				);
-
-				return std::make_tuple(std::ref(buffer), std::move(stagingBuffer), std::move(deviceBuffer));
-			};
-
-			return model.buffers |
-				std::views::transform(transform) |
-				std::ranges::to<std::vector<std::tuple<const tinygltf::Buffer&, VmaBuffer, VmaBuffer>>>();
-		}();
-
-		transferCommandBuffer.begin({ .flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit });
-
-		for (const auto& [dataBuffer, stagingBuffer, deviceBuffer] : buffers)
-		{
-			const auto size = bufferSize(dataBuffer);
-
-			const auto result = stagingBuffer.CopyMemoryToAllocation(
-				dataBuffer.data.data(),
-				size
-			);
-			assert(result == vk::Result::eSuccess);
+		const auto spans = model.buffers
+			| std::views::transform(transform)
+			| std::ranges::to<std::vector<std::span<const std::byte>>>();
 
 
-			const auto copyRegion = vk::BufferCopy{
-				.srcOffset = stagingBuffer.offset(),
-				.dstOffset = deviceBuffer.offset(),
-				.size = size
-			};
-
-			transferCommandBuffer.copyBuffer(*stagingBuffer, *deviceBuffer, copyRegion); // TODO: copyBuffer2
-		}
-
-		transferCommandBuffer.end();
-
-		const auto commandBufferInfo = vk::CommandBufferSubmitInfo{ .commandBuffer = *transferCommandBuffer };
-		const auto submitInfo = vk::SubmitInfo2{}.setCommandBufferInfos(commandBufferInfo);
-
-		transferQueue.submit2(submitInfo);
-		transferQueue.waitIdle();
-
-		return buffers
-			| std::views::transform([](auto& tuple) { return Buffer(std::move(std::get<2>(tuple))); })
-			| std::ranges::to<std::vector<Buffer>>();
-
+		return loadBuffers(spans);
 	}();
 
+	auto samplers = std::vector<vk::Sampler>();
+	auto imageInfos = std::vector<ImageInfo>();
+
+	auto materials2 = [&] {
+		const auto transform = [&](const tinygltf::Material& material){
+
+			const auto getTextureData = [&](const auto& textureInfo, const bool unorm) -> std::optional<Material2::TextureData> {
+				if (textureInfo.index == -1)
+				{
+					return std::nullopt;
+				}
+
+				const auto& texture = model.textures[textureInfo.index];
+
+				assert(texture.source != -1); // TODO
+				const auto& image = model.images[texture.source];
+
+				const auto getTextureIndex = [&] {
+
+					const auto imageSize = [&] {
+						return image.image.size() * sizeof(decltype(image.image)::value_type);
+					};
+
+					const auto extent = [&]() {
+						return vk::Extent3D{
+							.width = static_cast<uint32_t>(image.width),
+							.height = static_cast<uint32_t>(image.height),
+							.depth = 1,
+						};
+					};
+
+					const auto data = reinterpret_cast<const std::byte*>(image.image.data());
+
+					const auto imageInfo = ImageInfo{
+						.imageBuffer = std::span<const std::byte>(data, imageSize()),
+						.format = GltfImageToVkFormat(image, unorm).value(),
+						.extent = extent(),
+					};
+
+					auto it = std::ranges::find(imageInfos, imageInfo);
+
+					if (it != imageInfos.end())
+					{
+						const auto result = std::distance(imageInfos.begin(), it);
+						return static_cast<uint32_t>(result);
+					}
+					else
+					{
+						imageInfos.push_back(imageInfo);
+						const auto result = imageInfos.size() - 1;
+						return static_cast<uint32_t>(result);
+					}
+				};
+
+				const auto getUV = [&]() {
+					return static_cast<uint32_t>(textureInfo.texCoord);
+				};
+
+				const auto getSamplerIndex = [&] {
+					const auto samplerInfo = texture.sampler != -1 ?
+						GltfToVkSamplerInfo(model.samplers[texture.sampler]) :
+						getDefaultSamplerInfo();
+
+					const auto sampler = getSampler(samplerInfo);
+
+					auto it = std::ranges::find(samplers, sampler);
+
+					if (it != samplers.end())
+					{
+						const auto result = std::distance(samplers.begin(), it);
+						return static_cast<uint32_t>(result);
+					}
+					else
+					{
+						samplers.push_back(sampler);
+						const auto result = samplers.size() - 1;
+						return static_cast<uint32_t>(result);
+					}
+				};
+
+				const auto result = Material2::TextureData{
+					.texture = getTextureIndex(),
+					.sampler = getSamplerIndex(),
+					.uv = getUV(),
+				};
+
+				return std::make_optional(result);
+			};
+
+			return Material2{
+				.baseColorFactor = glm::make_vec4(material.pbrMetallicRoughness.baseColorFactor.data()),
+				.baseColorTexture = getTextureData(material.pbrMetallicRoughness.baseColorTexture, false),
+				.metallicRoughnessTexture = getTextureData(material.pbrMetallicRoughness.metallicRoughnessTexture, true),
+				.normalTexture = getTextureData(material.normalTexture, true),
+				.occlusionTexture = getTextureData(material.occlusionTexture, true),
+				.emissiveTexture = getTextureData(material.emissiveTexture, false),
+				.metallicFactor = static_cast<float>(material.pbrMetallicRoughness.metallicFactor),
+				.roughnessFactor = static_cast<float>(material.pbrMetallicRoughness.roughnessFactor),
+				.normalTextureScale = static_cast<float>(material.normalTexture.scale),
+				.alphaCutoff = static_cast<float>(material.alphaCutoff),
+			};
+		};
+
+		auto result = model.materials
+			| std::views::transform(transform)
+			| std::ranges::to<std::vector<Material2>>();
+
+		// default material
+		result.push_back(transform(tinygltf::Material()));
+
+		return result;
+	}();
+
+	auto materialsSSBO = createMaterialsSSBO(materials2);
+	auto imageData = createImages(imageInfos);
+
+#if 0
 	auto materials = [&] {
 		const auto imageSize = [](const tinygltf::Image& image) {
 			return image.image.size() * sizeof(decltype(image.image)::value_type);
@@ -392,6 +473,7 @@ Model Loader::loadFromFile(const std::string_view& gltfFile)
 
 		return materials;
 	}();
+#endif
 
 	const auto createPrimitive = [&](const tinygltf::Primitive& primitive) {
 		const auto getPrimitiveMode = [&] {
@@ -401,8 +483,8 @@ Model Loader::loadFromFile(const std::string_view& gltfFile)
 			case -1: // -1 is default == TINYGLTF_MODE_TRIANGLES //	TODO
 			case TINYGLTF_MODE_TRIANGLES: result = vk::PrimitiveTopology::eTriangleList; break;
 			case TINYGLTF_MODE_POINTS: result = vk::PrimitiveTopology::ePointList; break;
-			case TINYGLTF_MODE_LINE_LOOP: /*assert(false); break;*/ // TODO: there is no line loop in Vulkan, implement as line strip?
 			case TINYGLTF_MODE_LINE: result = vk::PrimitiveTopology::eLineList; break;
+			case TINYGLTF_MODE_LINE_LOOP: result = vk::PrimitiveTopology::eLineStrip; break; // TODO: Vulkan doesn't support line loop
 			case TINYGLTF_MODE_LINE_STRIP: result = vk::PrimitiveTopology::eLineStrip; break;
 			case TINYGLTF_MODE_TRIANGLE_STRIP: result = vk::PrimitiveTopology::eTriangleStrip; break;
 			case TINYGLTF_MODE_TRIANGLE_FAN: result = vk::PrimitiveTopology::eTriangleFan; break;
@@ -517,12 +599,27 @@ Model Loader::loadFromFile(const std::string_view& gltfFile)
 			return std::nullopt;
 		}();
 
+		const auto materialIndex = [&] {
+			return primitive.material != -1 ?
+				static_cast<uint32_t>(primitive.material) :
+				static_cast<uint32_t>(model.materials.size());
+		}();
+
+		const auto& material = materials2[materialIndex];
+
+		primitivePipelineInfo.hasBaseColorTexture = material.baseColorTexture.has_value();
+		primitivePipelineInfo.hasMetallicRoughnessTexture = material.metallicRoughnessTexture.has_value();
+		primitivePipelineInfo.hasNormalTexture = material.normalTexture.has_value();
+		primitivePipelineInfo.hasOcclusionTexture = material.occlusionTexture.has_value();
+		primitivePipelineInfo.hasEmissiveTexture = material.emissiveTexture.has_value();
+
 		return Primitive{
 			.vertexBindData = std::move(vertexBindData),
 			.topology = getPrimitiveMode(),
 			.pipeline = getPipeline(primitivePipelineInfo),
 			.count = count,
 			.indexedData = std::move(indexedData),
+			.materialIndex = materialIndex,
 			.drawFunc = drawFunc,
 		};
 	};
@@ -532,7 +629,9 @@ Model Loader::loadFromFile(const std::string_view& gltfFile)
 			| std::views::transform([&](const auto& primitive) { return createPrimitive(primitive); })
 			| std::ranges::to<std::vector<Primitive>>();
 
-		return Mesh{ .primitives = std::move(primitives) };
+		return Mesh{
+			.primitives = std::move(primitives),
+		};
 	};
 
 	auto meshes = model.meshes
@@ -568,7 +667,7 @@ Model Loader::loadFromFile(const std::string_view& gltfFile)
 		| std::views::transform([&](const auto& scene) { return createScene(scene); })
 		| std::ranges::to<std::vector<Scene>>();
 
-#if 1
+#if 0
 	constexpr auto descriptorCount = 256u;
 	const auto countInfo = vk::DescriptorSetVariableDescriptorCountAllocateInfo{
 	}.setDescriptorCounts(descriptorCount);
@@ -579,6 +678,7 @@ Model Loader::loadFromFile(const std::string_view& gltfFile)
 	}.setSetLayouts(*pipelineLayoutData.descriptorSetLayout);
 
 	auto descriptorSets = (*device).allocateDescriptorSets(allocateInfo);
+	//auto descriptorSets = device.allocateDescriptorSets(allocateInfo);
 
 	auto descriptorWrites = std::vector<vk::WriteDescriptorSet>();
 
@@ -649,13 +749,93 @@ Model Loader::loadFromFile(const std::string_view& gltfFile)
 	device.updateDescriptorSets(descriptorWrites, {});
 #endif
 
+	auto descriptorSetsRAII = [&] {
+		const auto allocateInfo = vk::DescriptorSetAllocateInfo{
+			.descriptorPool = descriptorPool,
+		}.setSetLayouts(*pipelineLayoutData.descriptorSetLayout);
+
+		return device.allocateDescriptorSets(allocateInfo);
+	}(); 
+
+	auto bindlessDescriptorSetsRAII = [&] {
+		constexpr auto descriptorCount = 256u;
+
+		const auto countInfo = vk::DescriptorSetVariableDescriptorCountAllocateInfo{}
+			.setDescriptorCounts(descriptorCount);
+
+		const auto allocateInfo = vk::DescriptorSetAllocateInfo{
+			.pNext = &countInfo,
+			.descriptorPool = bindlessDescriptorPool,
+		}.setSetLayouts(*pipelineLayoutData.bindlessDescriptorSetLayout);
+
+		return device.allocateDescriptorSets(allocateInfo);
+	}();
+
+	auto descriptorSets = std::vector<vk::DescriptorSet>();
+	descriptorSets.reserve(descriptorSetsRAII.size() + bindlessDescriptorSetsRAII.size());
+
+	for (const auto& descriptorSet : descriptorSetsRAII)
+	{
+		descriptorSets.push_back(*descriptorSet);
+	}
+
+	for (auto& descriptorSet : bindlessDescriptorSetsRAII)
+	{
+		descriptorSets.push_back(*descriptorSet);
+	}
+
+	std::ranges::move(bindlessDescriptorSetsRAII, std::back_inserter(descriptorSetsRAII));
+	bindlessDescriptorSetsRAII.clear();
+
+	auto descriptorWrites = std::vector<vk::WriteDescriptorSet>();
+
+	{
+		const auto descriptorBufferInfo = vk::DescriptorBufferInfo{
+			.buffer = *materialsSSBO.vmaBuffer,
+			.range = vk::WholeSize,
+		};
+
+		const auto descriptorWrite = vk::WriteDescriptorSet{
+			.dstSet = descriptorSets[0],
+			.dstBinding = 0,
+			.dstArrayElement = 0,
+			.descriptorType = vk::DescriptorType::eStorageBuffer,
+		}.setBufferInfo(descriptorBufferInfo);
+
+		descriptorWrites.push_back(descriptorWrite);
+	}
+
+	device.updateDescriptorSets(descriptorWrites, {});
+
+	auto index = 0u;
+	for (const auto& data: imageData)
+	{
+		const auto descriptorImageInfo = vk::DescriptorImageInfo{
+			.sampler = samplers[0], // TODO
+			.imageView = data.imageView,
+			.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
+		};
+
+		const auto descriptorWrite = vk::WriteDescriptorSet{
+			.dstSet = descriptorSets[1],
+			.dstBinding = 1,
+			.dstArrayElement = index++,
+			.descriptorType = vk::DescriptorType::eCombinedImageSampler,
+		}.setImageInfo(descriptorImageInfo);
+
+		device.updateDescriptorSets(descriptorWrite, {});
+	}
+
 	auto modelData = Model::Data
 	{
 		.buffers = std::move(buffers),
 		.meshes = std::move(meshes),
 		.scenes = std::move(scenes),
-		.materials = std::move(materials),
+		//.materials = std::move(materials),
+		.materialsSSBO = std::move(materialsSSBO),
+		.imageData = std::move(imageData),
 		.pipelineLayout = *pipelineLayoutData.pipelineLayout,
+		.descriptorSetsRAII = std::move(descriptorSetsRAII),
 		.descriptorSets = std::move(descriptorSets),
 		.device = device,
 	};

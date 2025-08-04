@@ -6,13 +6,8 @@ PushConstants pushConstants;
 [SpecializationConstant]
 const PrimitiveFlagsInt primitiveFlagsInt = 0;
 
-//[[vk::binding(0, 1)]]
-//uniform SamplerState samplers[];
-//uniform Texture2D textures[];
-uniform Sampler2D textures[];
+static const uint TEXCOORD_NUM = 2;
 
-static const bool HasTexcoord_0 = true;
- 
 struct VSInput
 {
     float3 position;
@@ -27,8 +22,7 @@ struct VSInput
 struct FSInput
 {
     float4 color;
-    float2 texcoord_0;
-    float2 texcoord_1;
+    float2 texcoord[TEXCOORD_NUM];
 }
 
 struct VSOutput
@@ -56,52 +50,85 @@ VSOutput main(const VSInput input)
 
     if (primitiveFlag.texcoord_0 == 1)
     {
-        output.fs.texcoord_0 = input.texcoord_0;
+        output.fs.texcoord[0] = input.texcoord_0;
     }
 
     if (primitiveFlag.texcoord_1 == 1)
     {
-        output.fs.texcoord_1 = input.texcoord_1;
+        output.fs.texcoord[1] = input.texcoord_1;
     }
 
-    //if (primitiveFlag.color_0 == 1)
+    // if (primitiveFlag.color_0 == 1)
     //{
-    //    output.fs.color = float4(input.color3_0, 1);
-    //}
-    //else if (primitiveFlag.color_0 == 1)
+    //     output.fs.color = float4(input.color3_0, 1);
+    // }
+    // else if (primitiveFlag.color_0 == 1)
     //{
-    //    output.fs.color = input.color4_0;
-    //}
+    //     output.fs.color = input.color4_0;
+    // }
 
     return output;
 }
 
-struct Material
+struct Texture
 {
-    DescriptorHandle<Texture2D> albedo;
-    DescriptorHandle<SamplerState> sampler;
+    DescriptorHandle<Sampler2D> texture;
+    //DescriptorHandle<SamplerState> samplerState;
+    uint uv;
+
+    float4 Sample(const float2 texcoord[TEXCOORD_NUM])
+    {
+        //return texture.Sample(samplerState, texcoord[uv]);
+        return texture.Sample(texcoord[uv]);
+    }
 }
 
-ParameterBlock<Material> materials[];
+struct Material
+{
+    float4 baseColorFactor;
+    Texture baseColorTexture;
+    Texture metallicRoughnessTexture;
+    Texture normalTexture;
+    Texture occlusionTexture;
+    Texture emissiveTexture;
+    float metallicFactor;
+    float roughnessFactor;
+    float normalTextureScale;
+    float alphaCutoff;
+}
 
-struct FSOutput
+StructuredBuffer<Material> materials;
+
+struct FSOutput  
 {
     float4 outColor : SV_Target0;
 }
+
+//layout(set = 1, binding = 1) uniform Sampler2D textures[];
 
 [shader("fragment")]
 FSOutput main(const FSInput input, float4 coord: SV_Position)
 {
     FSOutput output;
 
+    output.outColor = float4(1);
+
     let primitiveFlag = getPrimitiveFlags(primitiveFlagsInt);
 
-    output.outColor = float4(1);
-    let text_index = coord.x > 1440 / 2 ? 2 : 1;
-    output.outColor = textures[text_index].Sample(input.texcoord_0);
+    let material = materials[pushConstants.materialIndex];
 
-    //output.outColor = materials[0].albedo.Sample(materials[0].sampler, input.texcoord_0);
-    
+    var baseColor = material.baseColorFactor;
+
+    if (primitiveFlag.hasBaseColorTexture == 1)
+    {
+        baseColor *= material.baseColorTexture.Sample(input.texcoord);
+    }
+
+    baseColor = material.metallicRoughnessTexture.Sample(input.texcoord);
+
+    //baseColor = textures[2].Sample(input.texcoord[0]);
+
+    output.outColor = baseColor;
 
     return output;
 }

@@ -475,12 +475,13 @@ void RenderThreadFunc(
 	{
 		vk::Format result;
 
+		// TODO
 		const auto candidates = {
 			//vk::Format::eD32Sfloat,
 			//vk::Format::eD32SfloatS8Uint,
-			vk::Format::eD24UnormS8Uint,
+			//vk::Format::eD24UnormS8Uint,
 			vk::Format::eD16Unorm,
-			vk::Format::eD16UnormS8Uint,
+			//vk::Format::eD16UnormS8Uint,
 		};
 
 		for (const auto format : candidates)
@@ -914,9 +915,9 @@ void RenderThreadFunc(
 			const uint64_t signalSemaphoreValues = getTimelineValue(FrameTimeline::ePrePresent);
 
 			const auto submitInfo = vk::SubmitInfo2{}
-										.setWaitSemaphoreInfos(waitSemaphoresInfo)
-										.setCommandBufferInfos(commandBufferInfo)
-										.setSignalSemaphoreInfos(signalSemaphoreInfo);
+				.setWaitSemaphoreInfos(waitSemaphoresInfo)
+				.setCommandBufferInfos(commandBufferInfo)
+				.setSignalSemaphoreInfos(signalSemaphoreInfo);
 
 			PresentQueue.submit2(submitInfo);
 		}
@@ -944,9 +945,9 @@ void RenderThreadFunc(
 
 	// wait for present fences before shutdown
 	{
-		const auto fences = frameSynchronizations | std::views::transform([](const auto &frameSynchronization)
-																		  { return *frameSynchronization.present; }) |
-							std::ranges::to<vku::small::vector<vk::Fence, MAX_PENDING_FRAMES>>();
+		const auto fences = frameSynchronizations 
+			| std::views::transform([](const auto &frameSynchronization){ return *frameSynchronization.present; })
+			| std::ranges::to<vku::small::vector<vk::Fence, MAX_PENDING_FRAMES>>();
 
 		const auto result = Device.waitForFences(fences, true, UINT64_MAX_VALUE);
 		assert(result == vk::Result::eSuccess);
@@ -1016,6 +1017,7 @@ int main(const int argc, const char *const *argv)
 // TODO: slangc add shader optimization based on build config
 // TODO: add IWYU
 // TODO: add clang-format
+// TODO: https://learn.microsoft.com/en-us/cpp/code-quality/how-to-set-code-analysis-properties-for-c-cpp-projects?view=msvc-170
 // TODO: add clang-tidy
 // TODO: check VK_KHR_present_id
 // TODO: check VK_KHR_present_wait

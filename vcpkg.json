@@ -1,11 +1,12 @@
 {
   "dependencies": [
+    "boost-container-hash",
     "boost-pfr",
     "boost-scope",
     "cli11",
     "fmt",
     "glfw3",
     "tinygltf",
-    "boost-container-hash"
+    "boost-json"
   ]
 }

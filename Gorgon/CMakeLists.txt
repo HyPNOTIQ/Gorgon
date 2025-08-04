@@ -1,4 +1,4 @@
-﻿add_executable (Gorgon "Gorgon.cpp" "pch.h" "gltf/model.cpp" "gltf/model.h" "gltf/loader.h" "gltf/loader_tinygltf.cpp" "gltf/loader.cpp" "vk/vma.cpp" "vk/vma.h" "gltf/tinygltf_impl.cpp" "vk/vma_impl.cpp")
+﻿add_executable (Gorgon "Gorgon.cpp" "pch.h" "gltf/model.cpp" "gltf/model.h" "gltf/loader.h" "gltf/loader_tinygltf.cpp" "gltf/loader.cpp" "vk/vma.cpp" "vk/vma.h" "gltf/tinygltf_impl.cpp" "vk/vma_impl.cpp" "vk/shader.h" "vk/shader.cpp")
 
 set_property(TARGET Gorgon PROPERTY CXX_STANDARD 23)
 
@@ -23,6 +23,7 @@ find_package(glfw3 CONFIG REQUIRED)
 find_package(boost_pfr CONFIG REQUIRED)
 find_package(Boost REQUIRED COMPONENTS scope)
 find_package(Boost REQUIRED COMPONENTS container_hash)
+find_package(Boost REQUIRED COMPONENTS json)
 
 find_path(TINYGLTF_INCLUDE_DIRS "tiny_gltf.h")
 target_include_directories(Gorgon PRIVATE ${TINYGLTF_INCLUDE_DIRS})
@@ -39,6 +40,7 @@ target_link_libraries(Gorgon PRIVATE
 	Boost::pfr
 	Boost::scope
 	Boost::container_hash
+	Boost::json
 )
 
 if (DEFINED ENV{RENDERDOC_INCLUDE})
@@ -57,13 +59,13 @@ set(SHADER_OUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/shaders")
 
 if(CMAKE_CONFIGURATION_TYPES)
     # Multi-config generator
-    set(ENABLE_SHADER_REFLECTION $<CONFIG:Debug>)
+    set(ENABLE_GLSL_OUTPUT $<CONFIG:Debug>)
 else()
     # Single-config generator
     if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-        set(ENABLE_SHADER_REFLECTION ON)
+        set(ENABLE_GLSL_OUTPUT ON)
     else()
-        set(ENABLE_SHADER_REFLECTION OFF)
+        set(ENABLE_GLSL_OUTPUT OFF)
     endif()
 endif()
 

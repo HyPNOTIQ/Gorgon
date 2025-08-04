@@ -40,7 +40,10 @@ public:
 		const void* const pSrcHostPointer,
 		const vk::DeviceSize size) const;
 
-	vk::DeviceSize offset() const;
+	std::byte* MapMemory() const;
+	void UnmapMemory() const;
+
+	vk::DeviceSize size() const; // TODO
 	vk::Buffer operator*() const;
 
 private:
