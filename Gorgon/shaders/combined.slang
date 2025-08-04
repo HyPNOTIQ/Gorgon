@@ -72,15 +72,15 @@ VSOutput main(const VSInput input)
 
 struct Texture
 {
-    DescriptorHandle<Sampler2D> texture;
+    //DescriptorHandle<Sampler2D> texture;
     //DescriptorHandle<SamplerState> samplerState;
     uint uv;
 
-    float4 Sample(const float2 texcoord[TEXCOORD_NUM])
-    {
-        //return texture.Sample(samplerState, texcoord[uv]);
-        return texture.Sample(texcoord[uv]);
-    }
+    //float4 Sample(const float2 texcoord[TEXCOORD_NUM])
+    //{
+    //    //return texture.Sample(samplerState, texcoord[uv]);
+    //    return texture.Sample(texcoord[uv]);
+    //}
 }
 
 struct Material
@@ -104,7 +104,7 @@ struct FSOutput
     float4 outColor : SV_Target0;
 }
 
-//layout(set = 1, binding = 1) uniform Sampler2D textures[];
+layout(set = 1, binding = 1) uniform Sampler2D textures[];
 
 [shader("fragment")]
 FSOutput main(const FSInput input, float4 coord: SV_Position)
@@ -115,20 +115,21 @@ FSOutput main(const FSInput input, float4 coord: SV_Position)
 
     let primitiveFlag = getPrimitiveFlags(primitiveFlagsInt);
 
-    let material = materials[pushConstants.materialIndex];
+    //let material = materials[pushConstants.materialIndex];
 
-    var baseColor = material.baseColorFactor;
+    //var baseColor = material.baseColorFactor;
 
-    if (primitiveFlag.hasBaseColorTexture == 1)
-    {
-        baseColor *= material.baseColorTexture.Sample(input.texcoord);
-    }
+    //if (primitiveFlag.hasBaseColorTexture == 1)
+    //{
+    //    baseColor *= material.baseColorTexture.Sample(input.texcoord);
+    //}
 
-    baseColor = material.metallicRoughnessTexture.Sample(input.texcoord);
+    //baseColor = material.metallicRoughnessTexture.Sample(input.texcoord);
+    
+    //output.outColor = baseColor;
 
-    //baseColor = textures[2].Sample(input.texcoord[0]);
+    output.outColor = textures[0].Sample(input.texcoord[0]);
 
-    output.outColor = baseColor;
 
     return output;
 }

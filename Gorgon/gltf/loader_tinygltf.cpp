@@ -805,7 +805,9 @@ Model Loader::loadFromFile(const std::string_view& gltfFile)
 		descriptorWrites.push_back(descriptorWrite);
 	}
 
-	device.updateDescriptorSets(descriptorWrites, {});
+	//device.updateDescriptorSets(descriptorWrites, {});
+
+	descriptorWrites.clear();
 
 	auto index = 0u;
 	for (const auto& data: imageData)
@@ -823,8 +825,12 @@ Model Loader::loadFromFile(const std::string_view& gltfFile)
 			.descriptorType = vk::DescriptorType::eCombinedImageSampler,
 		}.setImageInfo(descriptorImageInfo);
 
-		device.updateDescriptorSets(descriptorWrite, {});
+		descriptorWrites.push_back(descriptorWrite);
+
+		break;
 	}
+
+	device.updateDescriptorSets(descriptorWrites, {});
 
 	auto modelData = Model::Data
 	{
