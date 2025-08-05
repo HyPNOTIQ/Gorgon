@@ -478,9 +478,9 @@ void RenderThreadFunc(
 		const auto candidates = {
 			//vk::Format::eD32Sfloat,
 			//vk::Format::eD32SfloatS8Uint,
-			vk::Format::eD24UnormS8Uint,
+			//vk::Format::eD24UnormS8Uint,
 			vk::Format::eD16Unorm,
-			vk::Format::eD16UnormS8Uint,
+			//vk::Format::eD16UnormS8Uint,
 		};
 
 		for (const auto format : candidates)
