@@ -31,6 +31,7 @@ foreach(SHADER ${SHADER_FILES})
 		${PROFILE}
 		${SLANG_STD}
 		-depfile ${DEP_FILE}
+		-O0 #TODO
 	)
 	
 	add_custom_command(

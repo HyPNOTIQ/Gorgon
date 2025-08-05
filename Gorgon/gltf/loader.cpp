@@ -338,7 +338,7 @@ std::vector<Buffer> Loader::loadBuffers(const std::vector<std::span<const std::b
 
 		return buffers |
 			std::views::transform(transform) |
-			std::ranges::to<std::vector<std::pair<VmaBuffer, VmaBuffer>>>();
+			std::ranges::to<std::vector>();
 	}();
 
 	transferCommandBuffer.end();
@@ -351,10 +351,10 @@ std::vector<Buffer> Loader::loadBuffers(const std::vector<std::span<const std::b
 
 	return buffers_temp
 		| std::views::transform([](auto& pair) { return Buffer(std::move(pair.second)); })
-		| std::ranges::to<std::vector<Buffer>>();
+		| std::ranges::to<std::vector>();
 }
 
-Buffer Loader::createMaterialsSSBO(const std::vector<Material2>& materials)
+Buffer Loader::createMaterialsSSBO(const std::vector<Material>& materials)
 {
 	const auto& reflection = shader.getReflection();
 
@@ -415,7 +415,7 @@ Buffer Loader::createMaterialsSSBO(const std::vector<Material2>& materials)
 
 			};
 
-			const auto setTexture = [&](const std::optional<Material2::TextureData>& val) {
+			const auto setTexture = [&](const std::optional<Material::TextureData>& val) {
 				if (val)
 				{
 					const auto& value = val.value();
@@ -431,13 +431,11 @@ Buffer Loader::createMaterialsSSBO(const std::vector<Material2>& materials)
 
 						if (name == "texture")
 						{
-							const auto textureIndex = glm::u32vec2(value.texture, 0u);
-							setValue(textureIndex, textureField, offset);
+							setValue(glm::u32vec2(value.texture, 0u), textureField, offset);
 						}
 						else if (name == "samplerState")
 						{
-							const auto samplerIndex = glm::u32vec2(value.sampler, 0u);
-							setValue(samplerIndex, textureField, offset);
+							setValue(glm::u32vec2(value.sampler, 0u), textureField, offset);
 						}
 						else if (name == "uv")
 						{
@@ -678,7 +676,7 @@ Loader::PipelineLayoutData Loader::createPipelineLayoutData(const vk::raii::Devi
 	}();
 
 	auto descriptorSetLayout1 = [&] {
-		const auto descriptorSetLayoutBindings = {
+		const auto descriptorSetLayoutBindings = std::to_array({
 			//vk::DescriptorSetLayoutBinding{
 			//	.binding = 0,
 			//	.descriptorType = vk::DescriptorType::eSampler,
@@ -697,17 +695,13 @@ Loader::PipelineLayoutData Loader::createPipelineLayoutData(const vk::raii::Devi
 			//	.descriptorCount = 1, // TODO
 			//	.stageFlags = vk::ShaderStageFlagBits::eFragment,
 			//},
-		};
+		});
 
 		const auto flags = vk::DescriptorBindingFlagBits::ePartiallyBound
 			| vk::DescriptorBindingFlagBits::eVariableDescriptorCount
 			| vk::DescriptorBindingFlagBits::eUpdateAfterBind;
 
-		const auto flagsArr = {
-			flags,
-			//flags,
-			//flags,
-		};
+		std::array<vk::DescriptorBindingFlags, descriptorSetLayoutBindings.size()> flagsArr{ flags };
 
 		const auto flagsCreateInfo = vk::DescriptorSetLayoutBindingFlagsCreateInfo{}.setBindingFlags(flagsArr);
 

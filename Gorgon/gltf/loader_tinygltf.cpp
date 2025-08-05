@@ -175,7 +175,7 @@ Model Loader::loadFromFile(const std::string_view& gltfFile)
 
 		const auto spans = model.buffers
 			| std::views::transform(transform)
-			| std::ranges::to<std::vector<std::span<const std::byte>>>();
+			| std::ranges::to<std::vector>();
 
 
 		return loadBuffers(spans);
@@ -184,10 +184,10 @@ Model Loader::loadFromFile(const std::string_view& gltfFile)
 	auto samplers = std::vector<vk::Sampler>();
 	auto imageInfos = std::vector<ImageInfo>();
 
-	auto materials2 = [&] {
+	auto materials = [&] {
 		const auto transform = [&](const tinygltf::Material& material){
 
-			const auto getTextureData = [&](const auto& textureInfo, const bool unorm) -> std::optional<Material2::TextureData> {
+			const auto getTextureData = [&](const auto& textureInfo, const bool unorm) -> std::optional<Material::TextureData> {
 				if (textureInfo.index == -1)
 				{
 					return std::nullopt;
@@ -200,9 +200,8 @@ Model Loader::loadFromFile(const std::string_view& gltfFile)
 
 				const auto getTextureIndex = [&] {
 
-					const auto imageSize = [&] {
-						return image.image.size() * sizeof(decltype(image.image)::value_type);
-					};
+					const auto data = reinterpret_cast<const std::byte*>(image.image.data());
+					const auto imageSize = image.image.size() * sizeof(decltype(image.image)::value_type);
 
 					const auto extent = [&]() {
 						return vk::Extent3D{
@@ -212,10 +211,8 @@ Model Loader::loadFromFile(const std::string_view& gltfFile)
 						};
 					};
 
-					const auto data = reinterpret_cast<const std::byte*>(image.image.data());
-
 					const auto imageInfo = ImageInfo{
-						.imageBuffer = std::span<const std::byte>(data, imageSize()),
+						.imageBuffer = std::span<const std::byte>(data, imageSize),
 						.format = GltfImageToVkFormat(image, unorm).value(),
 						.extent = extent(),
 					};
@@ -261,7 +258,7 @@ Model Loader::loadFromFile(const std::string_view& gltfFile)
 					}
 				};
 
-				const auto result = Material2::TextureData{
+				const auto result = Material::TextureData{
 					.texture = getTextureIndex(),
 					.sampler = getSamplerIndex(),
 					.uv = getUV(),
@@ -270,7 +267,7 @@ Model Loader::loadFromFile(const std::string_view& gltfFile)
 				return std::make_optional(result);
 			};
 
-			return Material2{
+			return Material{
 				.baseColorFactor = glm::make_vec4(material.pbrMetallicRoughness.baseColorFactor.data()),
 				.baseColorTexture = getTextureData(material.pbrMetallicRoughness.baseColorTexture, false),
 				.metallicRoughnessTexture = getTextureData(material.pbrMetallicRoughness.metallicRoughnessTexture, true),
@@ -286,7 +283,7 @@ Model Loader::loadFromFile(const std::string_view& gltfFile)
 
 		auto result = model.materials
 			| std::views::transform(transform)
-			| std::ranges::to<std::vector<Material2>>();
+			| std::ranges::to<std::vector>();
 
 		// default material
 		result.push_back(transform(tinygltf::Material()));
@@ -294,186 +291,8 @@ Model Loader::loadFromFile(const std::string_view& gltfFile)
 		return result;
 	}();
 
-	auto materialsSSBO = createMaterialsSSBO(materials2);
+	auto materialsSSBO = createMaterialsSSBO(materials);
 	auto imageData = createImages(imageInfos);
-
-#if 0
-	auto materials = [&] {
-		const auto imageSize = [](const tinygltf::Image& image) {
-			return image.image.size() * sizeof(decltype(image.image)::value_type);
-		};
-
-		const auto extent = [](const tinygltf::Image& image) {
-			return vk::Extent3D{
-				.width = static_cast<uint32_t>(image.width),
-				.height = static_cast<uint32_t>(image.height),
-				.depth = 1,
-			};
-		};
-
-		struct ImageLoad {
-			const tinygltf::Image& image;
-			VmaBuffer src;
-			vk::Image dst;
-		};
-
-		std::vector<ImageLoad> imageLoads;
-
-		const auto createMaterial = [&](const tinygltf::Material& material) {
-			const auto createTexture = [&](const tinygltf::TextureInfo& textureInfo) -> std::optional<Texture> {
-				const auto createImage = [&](const tinygltf::Image& image, const vk::Format format) {
-					const auto size = imageSize(image);
-
-					auto stagingBuffer = vma.createBuffer(
-						size,
-						vk::BufferUsageFlagBits::eTransferSrc,
-						VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT
-					);
-
-					auto vmaImage = [&] {
-						const auto createInfo = vk::ImageCreateInfo{
-							.imageType = vk::ImageType::e2D,
-							.format = format,
-							.extent = extent(image),
-							.mipLevels = 1,
-							.arrayLayers = 1,
-							.samples = vk::SampleCountFlagBits::e1,
-							.tiling = vk::ImageTiling::eOptimal,
-							.usage = vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled,
-							.sharingMode = vk::SharingMode::eExclusive,
-						};
-
-						return vma.createImage(createInfo, 0);
-					}();
-
-					auto imageLoad = ImageLoad{
-						.image = image,
-						.src = std::move(stagingBuffer),
-						.dst = *vmaImage,
-					};
-
-					imageLoads.push_back(std::move(imageLoad));
-
-					return vmaImage;
-				};
-
-				if (textureInfo.index == -1) {
-					return std::nullopt;
-				}
-
-				const auto& texture = model.textures[textureInfo.index];
-				const auto& image = model.images[texture.source];
-				const auto format = vk::Format::eR8G8B8A8Srgb;
-				auto vmaImage = createImage(image, format);
-				auto imageView = [&] {
-					const auto createInfo = vk::ImageViewCreateInfo{
-						.image = *vmaImage,
-						.viewType = vk::ImageViewType::e2D,
-						.format = format,
-						.subresourceRange = COLOR_SUBRESOURCE_RANGE,
-					};
-
-					return device.createImageView(createInfo);
-				}();
-
-				const auto SamplerInfo = texture.sampler != -1 ?
-					GltfToVkSamplerInfo(model.samplers[texture.sampler]) :
-					getDefaultSamplerInfo();
-
-				return Texture{
-					.image = std::move(vmaImage),
-					.imageView = std::move(imageView),
-					.sampler = getSampler(SamplerInfo),
-					.uv = static_cast<uint32_t>(textureInfo.texCoord),
-				};
-			};
-
-			return Material{
-				.baseColorTexture = createTexture(material.pbrMetallicRoughness.baseColorTexture),
-				.metallicRoughnessTexture = createTexture(material.pbrMetallicRoughness.metallicRoughnessTexture),
-				.emissiveTexture = createTexture(material.emissiveTexture),
-			};
-		};
-
-		auto materials = model.materials
-			| std::views::transform([&](const auto& material) { return createMaterial(material); })
-			| std::ranges::to<std::vector<Material>>();
-
-		transferCommandBuffer.begin({ .flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit });
-
-		for (const auto& [image, src, dst] : imageLoads)
-		{
-			const auto size = imageSize(image);
-
-			const auto result = src.CopyMemoryToAllocation(
-				image.image.data(),
-				size
-			);
-			assert(result == vk::Result::eSuccess);
-
-			// to VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
-			{
-				const auto imageMemoryBarrier = vk::ImageMemoryBarrier2{
-					.newLayout = vk::ImageLayout::eTransferDstOptimal,
-					.srcQueueFamilyIndex = vk::QueueFamilyIgnored,
-					.dstQueueFamilyIndex = vk::QueueFamilyIgnored,
-					.image = dst,
-					.subresourceRange = COLOR_SUBRESOURCE_RANGE,
-				};
-
-				const auto dependencyInfo = vk::DependencyInfo{}.setImageMemoryBarriers(imageMemoryBarrier);
-				transferCommandBuffer.pipelineBarrier2(dependencyInfo);
-			}
-
-			constexpr auto COLOR_SUBRESOURCE_LAYERS = vk::ImageSubresourceLayers{
-				.aspectMask = vk::ImageAspectFlagBits::eColor,
-				.mipLevel = 0,
-				.baseArrayLayer = 0,
-				.layerCount = 1,
-			};
-
-			const auto copyRegion = vk::BufferImageCopy2{
-				.bufferOffset = 0,
-				.imageSubresource = COLOR_SUBRESOURCE_LAYERS,
-				.imageExtent = extent(image),
-			};
-
-			const auto copyBufferToImageInfo = vk::CopyBufferToImageInfo2
-			{
-				.srcBuffer = *src,
-				.dstImage = dst,
-				.dstImageLayout = vk::ImageLayout::eTransferDstOptimal,
-			}.setRegions(copyRegion);
-
-			transferCommandBuffer.copyBufferToImage2(copyBufferToImageInfo);
-
-			// to VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
-			{
-				const auto imageMemoryBarrier = vk::ImageMemoryBarrier2{
-					.oldLayout = vk::ImageLayout::eTransferDstOptimal,
-					.newLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
-					.srcQueueFamilyIndex = vk::QueueFamilyIgnored,
-					.dstQueueFamilyIndex = vk::QueueFamilyIgnored,
-					.image = dst,
-					.subresourceRange = COLOR_SUBRESOURCE_RANGE,
-				};
-
-				const auto dependencyInfo = vk::DependencyInfo{}.setImageMemoryBarriers(imageMemoryBarrier);
-				transferCommandBuffer.pipelineBarrier2(dependencyInfo);
-			}
-		}
-
-		transferCommandBuffer.end();
-
-		const auto commandBufferInfo = vk::CommandBufferSubmitInfo{ .commandBuffer = *transferCommandBuffer };
-		const auto submitInfo = vk::SubmitInfo2{}.setCommandBufferInfos(commandBufferInfo);
-
-		transferQueue.submit2(submitInfo);
-		transferQueue.waitIdle();
-
-		return materials;
-	}();
-#endif
 
 	const auto createPrimitive = [&](const tinygltf::Primitive& primitive) {
 		const auto getPrimitiveMode = [&] {
@@ -605,7 +424,7 @@ Model Loader::loadFromFile(const std::string_view& gltfFile)
 				static_cast<uint32_t>(model.materials.size());
 		}();
 
-		const auto& material = materials2[materialIndex];
+		const auto& material = materials[materialIndex];
 
 		primitivePipelineInfo.hasBaseColorTexture = material.baseColorTexture.has_value();
 		primitivePipelineInfo.hasMetallicRoughnessTexture = material.metallicRoughnessTexture.has_value();
@@ -627,7 +446,7 @@ Model Loader::loadFromFile(const std::string_view& gltfFile)
 	const auto createMesh = [&](const tinygltf::Mesh& mesh) {
 		auto primitives = mesh.primitives
 			| std::views::transform([&](const auto& primitive) { return createPrimitive(primitive); })
-			| std::ranges::to<std::vector<Primitive>>();
+			| std::ranges::to<std::vector>();
 
 		return Mesh{
 			.primitives = std::move(primitives),
@@ -636,19 +455,19 @@ Model Loader::loadFromFile(const std::string_view& gltfFile)
 
 	auto meshes = model.meshes
 		| std::views::transform([&](const auto& mesh) { return createMesh(mesh); })
-		| std::ranges::to<std::vector<Mesh>>();
+		| std::ranges::to<std::vector>();
 
 	const auto createNode = [&](this auto self, const tinygltf::Node& node, const glm::mat4& parentTransform) -> Node {
-		const auto transform = parentTransform * getNodeMat4(node);
+		const auto modelMatix = parentTransform * getNodeMat4(node);
 
 		auto children = node.children
-			| std::views::transform([&](const auto& childIndex) { return self(model.nodes[childIndex], transform); })
-			| std::ranges::to<std::vector<Node>>();
+			| std::views::transform([&](const auto& childIndex) { return self(model.nodes[childIndex], modelMatix); })
+			| std::ranges::to<std::vector>();
 
 		return Node{
-			.transform = transform,
+			.modelMatix = modelMatix,
 			.mesh = node.mesh == -1 ? std::nullopt : std::make_optional(std::ref(meshes[node.mesh])),
-			.frontFace = glm::determinant(transform) > 0.0f ? vk::FrontFace::eCounterClockwise : vk::FrontFace::eClockwise,
+			.frontFace = glm::determinant(modelMatix) > 0.0f ? vk::FrontFace::eCounterClockwise : vk::FrontFace::eClockwise,
 			.children = std::move(children),
 		};
 	};
@@ -656,7 +475,7 @@ Model Loader::loadFromFile(const std::string_view& gltfFile)
 	const auto createScene = [&](const tinygltf::Scene& scene) {
 		auto nodes = scene.nodes
 			| std::views::transform([&](const auto& nodeIndex) { return createNode(model.nodes[nodeIndex], MAT4_IDENTITY); })
-			| std::ranges::to<std::vector<Node>>();
+			| std::ranges::to<std::vector>();
 
 		return Scene{
 			.nodes = std::move(nodes)
@@ -665,89 +484,7 @@ Model Loader::loadFromFile(const std::string_view& gltfFile)
 
 	auto scenes = model.scenes
 		| std::views::transform([&](const auto& scene) { return createScene(scene); })
-		| std::ranges::to<std::vector<Scene>>();
-
-#if 0
-	constexpr auto descriptorCount = 256u;
-	const auto countInfo = vk::DescriptorSetVariableDescriptorCountAllocateInfo{
-	}.setDescriptorCounts(descriptorCount);
-
-	const auto allocateInfo = vk::DescriptorSetAllocateInfo{
-		.pNext = &countInfo,
-		.descriptorPool = pipelineLayoutData.descriptorPool,
-	}.setSetLayouts(*pipelineLayoutData.descriptorSetLayout);
-
-	auto descriptorSets = (*device).allocateDescriptorSets(allocateInfo);
-	//auto descriptorSets = device.allocateDescriptorSets(allocateInfo);
-
-	auto descriptorWrites = std::vector<vk::WriteDescriptorSet>();
-
-	auto index = 0u;
-	for (const auto& material: materials)
-	{
-		if (material.baseColorTexture)
-		{
-			const auto& texture = material.baseColorTexture.value();
-
-			const auto descriptorImageInfo = vk::DescriptorImageInfo{
-				.sampler = texture.sampler,
-				.imageView = texture.imageView,
-				.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
-			};
-
-			const auto descriptorWrite = vk::WriteDescriptorSet{
-				.dstSet = descriptorSets[0],
-				.dstBinding = 0,
-				.dstArrayElement = index++,
-				.descriptorType = vk::DescriptorType::eCombinedImageSampler,
-			}.setImageInfo(descriptorImageInfo);
-
-			descriptorWrites.push_back(descriptorWrite);
-		}
-
-		if (material.metallicRoughnessTexture)
-		{
-			const auto& texture = material.metallicRoughnessTexture.value();
-
-			const auto descriptorImageInfo = vk::DescriptorImageInfo{
-				.sampler = texture.sampler,
-				.imageView = texture.imageView,
-				.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
-			};
-
-			const auto descriptorWrite = vk::WriteDescriptorSet{
-				.dstSet = descriptorSets[0],
-				.dstBinding = 0,
-				.dstArrayElement = index++,
-				.descriptorType = vk::DescriptorType::eCombinedImageSampler,
-			}.setImageInfo(descriptorImageInfo);
-
-			descriptorWrites.push_back(descriptorWrite);
-		}
-
-		if (material.emissiveTexture)
-		{
-			const auto& texture = material.emissiveTexture.value();
-
-			const auto descriptorImageInfo = vk::DescriptorImageInfo{
-				.sampler = texture.sampler,
-				.imageView = texture.imageView,
-				.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
-			};
-
-			const auto descriptorWrite = vk::WriteDescriptorSet{
-				.dstSet = descriptorSets[0],
-				.dstBinding = 0,
-				.dstArrayElement = index++,
-				.descriptorType = vk::DescriptorType::eCombinedImageSampler,
-			}.setImageInfo(descriptorImageInfo);
-
-			descriptorWrites.push_back(descriptorWrite);
-		}
-	}
-
-	device.updateDescriptorSets(descriptorWrites, {});
-#endif
+		| std::ranges::to<std::vector>();
 
 	auto descriptorSetsRAII = [&] {
 		const auto allocateInfo = vk::DescriptorSetAllocateInfo{
@@ -788,6 +525,7 @@ Model Loader::loadFromFile(const std::string_view& gltfFile)
 	bindlessDescriptorSetsRAII.clear();
 
 	auto descriptorWrites = std::vector<vk::WriteDescriptorSet>();
+	descriptorWrites.reserve(1 + imageData.size());
 
 	{
 		const auto descriptorBufferInfo = vk::DescriptorBufferInfo{
@@ -805,29 +543,30 @@ Model Loader::loadFromFile(const std::string_view& gltfFile)
 		descriptorWrites.push_back(descriptorWrite);
 	}
 
-	//device.updateDescriptorSets(descriptorWrites, {});
-
-	descriptorWrites.clear();
-
-	auto index = 0u;
-	for (const auto& data: imageData)
-	{
-		const auto descriptorImageInfo = vk::DescriptorImageInfo{
-			.sampler = samplers[0], // TODO
-			.imageView = data.imageView,
-			.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
+	const auto descriptorImageInfos = [&] {
+		const auto transform = [&](const ImageData& data) {
+			return vk::DescriptorImageInfo{
+				.sampler = samplers[0], // TODO
+				.imageView = data.imageView,
+				.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
+			};
 		};
 
+		return imageData
+			| std::views::transform(transform)
+			| std::ranges::to<std::vector>();
+	}();
+
+	if(not descriptorImageInfos.empty())
+	{
 		const auto descriptorWrite = vk::WriteDescriptorSet{
 			.dstSet = descriptorSets[1],
 			.dstBinding = 1,
-			.dstArrayElement = index++,
+			.dstArrayElement = 0,
 			.descriptorType = vk::DescriptorType::eCombinedImageSampler,
-		}.setImageInfo(descriptorImageInfo);
+		}.setImageInfo(descriptorImageInfos);
 
 		descriptorWrites.push_back(descriptorWrite);
-
-		break;
 	}
 
 	device.updateDescriptorSets(descriptorWrites, {});
@@ -837,7 +576,6 @@ Model Loader::loadFromFile(const std::string_view& gltfFile)
 		.buffers = std::move(buffers),
 		.meshes = std::move(meshes),
 		.scenes = std::move(scenes),
-		//.materials = std::move(materials),
 		.materialsSSBO = std::move(materialsSSBO),
 		.imageData = std::move(imageData),
 		.pipelineLayout = *pipelineLayoutData.pipelineLayout,

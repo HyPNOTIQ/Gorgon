@@ -100,7 +100,7 @@ void Node::Draw(const DrawInfo& info) const
 {
 	if (this->mesh)
 	{
-		const auto mvp = info.viewProj * transform;
+		const auto mvp = info.viewProj * modelMatix;
 
 		const auto pushConstantsInfo = vk::PushConstantsInfo{
 			.layout = info.pipelineLayout,

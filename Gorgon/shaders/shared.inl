@@ -3,6 +3,8 @@
 struct PushConstants
 {
     float4x4 mvp;
+    //float4x4 modelMatrix;
+    //float4x4 normalMatrix;
     uint materialIndex;
 };
 

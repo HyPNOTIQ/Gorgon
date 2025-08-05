@@ -216,12 +216,18 @@ void RenderThreadFunc(
 					return static_cast<uint32_t>(pair.first);
 				};
 
-				return QueueFamilyProperties | std::views::enumerate | std::views::filter(filter) | std::views::transform(transform) | std::ranges::to<std::vector<uint32_t>>();
+				return QueueFamilyProperties
+					| std::views::enumerate
+					| std::views::filter(filter)
+					| std::views::transform(transform)
+					| std::ranges::to<std::vector>();
 			}();
 
 			const auto presentQueues = [&]
 			{
-				return std::views::iota(0u, QueueFamilyProperties.size()) | std::views::filter(supportsPresent) | std::ranges::to<std::vector<uint32_t>>();
+				return std::views::iota(0u, QueueFamilyProperties.size())
+					| std::views::filter(supportsPresent)
+					| std::ranges::to<std::vector>();
 			}();
 
 			for (const uint32_t graphicsQueueIndex : graphicsQueues)
@@ -667,6 +673,7 @@ void RenderThreadFunc(
 
 	const auto gltfModel = gltfLoader.loadFromFile(config.gltfFile);
 
+	// TODO
 	float dolly = 0.5f;					   // distance from center
 	float azimuth = 0.0f;				   // horizontal angle (radians)
 	float altitude = glm::radians(30.0f);  // vertical angle (radians)
@@ -725,7 +732,7 @@ void RenderThreadFunc(
 					const auto imageMemoryBarriers = {
 						// to VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
 						vk::ImageMemoryBarrier2{
-							//.srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput, // TODO: ?
+							.srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
 							.dstStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
 							.dstAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite,
 							.newLayout = vk::ImageLayout::eColorAttachmentOptimal,
@@ -735,7 +742,9 @@ void RenderThreadFunc(
 							.subresourceRange = COLOR_SUBRESOURCE_RANGE,
 						},
 						// to VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
-						vk::ImageMemoryBarrier2{
+						vk::ImageMemoryBarrier2{ // TODO
+							.srcStageMask = vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests,
+							.srcAccessMask = vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
 							.dstStageMask = vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests,
 							.dstAccessMask = vk::AccessFlagBits2::eDepthStencilAttachmentRead | vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
 							.newLayout = vk::ImageLayout::eDepthAttachmentOptimal,
@@ -774,8 +783,7 @@ void RenderThreadFunc(
 					.renderArea = vk::Rect2D{.extent = surfaceExtent},
 					.layerCount = 1,
 					.pDepthAttachment = &depthAttachment,
-				}
-											   .setColorAttachments(colorAttachment);
+				}.setColorAttachments(colorAttachment);
 
 				commandBuffer.beginRendering(renderingInfo);
 
@@ -926,16 +934,16 @@ void RenderThreadFunc(
 		{
 			const auto presentFenceInfo = vk::SwapchainPresentFenceInfoEXT{}.setFences(*frameSynchronization.present);
 
-			const auto presentInfoChain = createStructureChain(
-				vk::PresentInfoKHR{}
+			const auto fenceInfo = vk::SwapchainPresentFenceInfoEXT{}.setFences(*frameSynchronization.present);
+
+			const auto presentInfo = vk::PresentInfoKHR{ .pNext = &fenceInfo }
 					.setWaitSemaphores(*frameSynchronization.prePresent)
 					.setSwapchains(*Swapchain)
-					.setImageIndices(NextImage),
-				vk::SwapchainPresentFenceInfoEXT{}.setFences(*frameSynchronization.present));
+					.setImageIndices(NextImage);
 
 			// TODO: swapchain recreation
 			{
-				const auto result = PresentQueue.presentKHR(presentInfoChain.get<vk::PresentInfoKHR>());
+				const auto result = PresentQueue.presentKHR(presentInfo);
 				assert(result == vk::Result::eSuccess);
 			}
 		}

@@ -65,7 +65,7 @@ private:
     std::unordered_map<PrimitivePipelineInfo, vk::raii::Pipeline> pipelines;
 
 	std::vector<Buffer> loadBuffers(const std::vector<std::span<const std::byte>>& buffers);
-	Buffer createMaterialsSSBO(const std::vector<Material2>& materials);
+	Buffer createMaterialsSSBO(const std::vector<Material>& materials);
 
 	struct ImageInfo {
 		std::span<const std::byte> imageBuffer;

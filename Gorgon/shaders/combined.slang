@@ -36,6 +36,14 @@ PrimitiveFlags getPrimitiveFlags(const PrimitiveFlagsInt primitiveFlagsInt)
     return reinterpret<PrimitiveFlags>(primitiveFlagsInt);
 }
 
+//struct CameraData
+//{
+//    float4x4 ViewProjectionMatrix;
+//    float3 position;
+//}
+
+//ParameterBlock<CameraData> cameraData;
+
 [shader("vertex")]
 VSOutput main(const VSInput input)
 {
@@ -72,15 +80,14 @@ VSOutput main(const VSInput input)
 
 struct Texture
 {
-    //DescriptorHandle<Sampler2D> texture;
+    DescriptorHandle<Sampler2D> texture;
     //DescriptorHandle<SamplerState> samplerState;
     uint uv;
 
-    //float4 Sample(const float2 texcoord[TEXCOORD_NUM])
-    //{
-    //    //return texture.Sample(samplerState, texcoord[uv]);
-    //    return texture.Sample(texcoord[uv]);
-    //}
+    float4 Sample(const float2 texcoord[TEXCOORD_NUM])
+    {
+        return texture.Sample(texcoord[uv]);
+    }
 }
 
 struct Material
@@ -104,31 +111,53 @@ struct FSOutput
     float4 outColor : SV_Target0;
 }
 
-layout(set = 1, binding = 1) uniform Sampler2D textures[];
 
 [shader("fragment")]
 FSOutput main(const FSInput input, float4 coord: SV_Position)
 {
     FSOutput output;
 
-    output.outColor = float4(1);
-
     let primitiveFlag = getPrimitiveFlags(primitiveFlagsInt);
 
-    //let material = materials[pushConstants.materialIndex];
+    output.outColor = float4(1);
 
-    //var baseColor = material.baseColorFactor;
+    let material = materials[pushConstants.materialIndex];
 
-    //if (primitiveFlag.hasBaseColorTexture == 1)
+    var baseColor = material.baseColorFactor;
+
+    if (primitiveFlag.hasBaseColorTexture == 1)
+    {
+        baseColor = material.baseColorTexture.Sample(input.texcoord);
+    }
+
+    //if (primitiveFlag.hasMetallicRoughnessTexture == 1)
     //{
-    //    baseColor *= material.baseColorTexture.Sample(input.texcoord);
+    //    baseColor = material.metallicRoughnessTexture.Sample(input.texcoord);
     //}
 
-    //baseColor = material.metallicRoughnessTexture.Sample(input.texcoord);
-    
-    //output.outColor = baseColor;
+    //if (primitiveFlag.hasNormalTexture == 1)
+    //{
+    //    baseColor = material.normalTexture.Sample(input.texcoord);
+    //}
 
-    output.outColor = textures[0].Sample(input.texcoord[0]);
+    //if (primitiveFlag.hasOcclusionTexture == 1)
+    //{
+    //    baseColor = material.occlusionTexture.Sample(input.texcoord);
+    //}
+
+    //if (primitiveFlag.hasEmissiveTexture == 1)
+    //{
+    //    baseColor = material.emissiveTexture.Sample(input.texcoord);
+    //}
+
+    // baseColor = material.metallicRoughnessTexture.Sample(input.texcoord);
+
+    //output.outColor.x = cameraData.position.x;
+    output.outColor = baseColor;
+
+    //output.outColor = float4(1);
+    //let text_index = coord.x > 1440 / 2 ? 0 : 1;
+    //output.outColor = textures[text_index].Sample(input.texcoord[0]);
 
 
     return output;

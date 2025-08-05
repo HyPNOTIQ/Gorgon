@@ -16,7 +16,7 @@ struct ImageData
 	vk::raii::ImageView imageView;
 };
 
-class Material2
+class Material
 {
 public:
 	struct TextureData
@@ -125,7 +125,8 @@ public:
 	};
 
 	void Draw(const DrawInfo& drawInfo) const;
-	glm::mat4 transform;
+	glm::mat4 modelMatix;
+	//glm::mat4 normalMatrix;
 	OptionalRef<Mesh> mesh;
 	vk::FrontFace frontFace;
 	
