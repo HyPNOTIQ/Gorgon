@@ -10,26 +10,37 @@ public:
 	vk::raii::Sampler sampler;
 };
 
-class Texture
+struct ImageData
 {
-public:
 	VmaImage image;
 	vk::raii::ImageView imageView;
-	vk::Sampler sampler;
-	uint32_t uv;
 };
 
 class Material
 {
 public:
-	std::optional<Texture> baseColorTexture;
-	std::optional<Texture> metallicRoughnessTexture;
-	std::optional<Texture> emissiveTexture;
+	struct TextureData
+	{
+		uint32_t texture;
+		uint32_t sampler;
+		uint32_t uv;
+	};
 
-	// TODO
-	//struct Params {
-	//	uint32_t baseColorUV = 0;
-	//} params;
+	glm::vec4 baseColorFactor;
+	std::optional<TextureData> baseColorTexture;
+	std::optional<TextureData> metallicRoughnessTexture;
+	std::optional<TextureData> normalTexture;
+	std::optional<TextureData> occlusionTexture;
+	std::optional<TextureData> emissiveTexture;
+	//uint8_t baseColorTextureUV;
+	//uint8_t metallicRoughnessTextureUV;
+	//uint8_t normalTextureUV;
+	//uint8_t occlusionTextureUV;
+	//uint8_t emissiveTextureUV;
+	float metallicFactor;
+	float roughnessFactor;
+	float normalTextureScale;
+	float alphaCutoff;
 };
 
 class Buffer
@@ -46,6 +57,7 @@ public:
 		const vk::raii::CommandBuffer& commandBuffer;
 		const vk::Extent2D& surfaceExtent;
 		vk::FrontFace frontFace;
+		vk::PipelineLayout pipelineLayout;
 	};
 
 	using DrawFunc = void (Primitive::*)(const DrawInfo&) const;
@@ -80,9 +92,9 @@ public:
 		vk::DeviceSize size;
 		vk::IndexType type;
 	};
-
 	std::optional<IndexedData> indexedData;
 
+	uint32_t materialIndex;
 	DrawFunc drawFunc;
 };
 
@@ -93,6 +105,7 @@ public:
 	{
 		const vk::raii::CommandBuffer& commandBuffer;
 		const vk::Extent2D& surfaceExtent;
+		vk::PipelineLayout pipelineLayout;
 	};
 
 	void Draw(const DrawInfo& drawInfo) const;
@@ -112,7 +125,8 @@ public:
 	};
 
 	void Draw(const DrawInfo& drawInfo) const;
-	glm::mat4 transform;
+	glm::mat4 modelMatix;
+	//glm::mat4 normalMatrix;
 	OptionalRef<Mesh> mesh;
 	vk::FrontFace frontFace;
 	
@@ -158,10 +172,13 @@ private:
 		std::vector<Buffer> buffers;
 		std::vector<Mesh> meshes;
 		std::vector<Scene> scenes;
-		std::vector<Material> materials;
+		//std::vector<Material> materials;
+		Buffer materialsSSBO;
+		std::vector<ImageData> imageData;
 		vk::PipelineLayout pipelineLayout;
+		std::vector<vk::raii::DescriptorSet> descriptorSetsRAII;
 		std::vector<vk::DescriptorSet> descriptorSets;
-		vk::DescriptorPool descriptorPool;
+		//vk::DescriptorPool descriptorPool;
 		const vk::raii::Device& device;
 	};
 

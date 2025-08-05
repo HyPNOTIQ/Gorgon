@@ -7,6 +7,7 @@
 #include <atomic>
 #include <unordered_map>
 #include <ranges>
+#include <span>
 
 // third party
 #include <slang/slang.h>
@@ -23,6 +24,7 @@
 #include <boost/pfr.hpp>
 #include <boost/scope/scope_exit.hpp>
 #include <boost/container_hash/hash.hpp>
+#include <boost/json.hpp>
 
 #if defined(RENDERDOC_INCLUDE) && !defined(NDEBUG)
 #include <renderdoc_app.h>
@@ -59,6 +61,13 @@ namespace std {
 	template <typename T1, typename T2>
 	struct hash<std::pair<T1, T2>> {
 		size_t operator()(const std::pair<T1, T2>& p) const noexcept {
+			return boost::hash_value(p);
+		}
+	};
+
+	template <typename... Ts>
+	struct hash<std::tuple<Ts...>> {
+		size_t operator()(const std::tuple<Ts...>& p) const noexcept {
 			return boost::hash_value(p);
 		}
 	};

@@ -92,11 +92,25 @@ vk::Result VmaBuffer::CopyMemoryToAllocation(
 	return static_cast<vk::Result>(result);
 }
 
-vk::DeviceSize VmaBuffer::offset() const
+std::byte* VmaBuffer::MapMemory() const
+{
+	void* pData;
+	const auto result = vmaMapMemory(allocator, allocation, &pData);
+
+	return static_cast<vk::Result>(result) == vk::Result::eSuccess ?
+		reinterpret_cast<std::byte*>(pData) : nullptr;
+}
+
+void VmaBuffer::UnmapMemory() const
+{
+	vmaUnmapMemory(allocator, allocation);
+}
+
+vk::DeviceSize VmaBuffer::size() const
 {
 	VmaAllocationInfo pAllocationInfo;
 	vmaGetAllocationInfo(allocator, allocation, &pAllocationInfo);
-	return pAllocationInfo.offset;
+	return pAllocationInfo.size;
 }
 
 vk::Buffer VmaBuffer::operator*() const
